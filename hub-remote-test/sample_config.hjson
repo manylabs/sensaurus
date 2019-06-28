@@ -1,0 +1,6 @@
+owner_id: 123
+hub_id: 45678
+host: host.amazonaws.com
+ca_path: cert/AmazonRootCA1.pem
+cert_path: cert/thing-certificate.pem.crt
+key_path: cert/thing-private.pem.key

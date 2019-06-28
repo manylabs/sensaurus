@@ -1,0 +1,49 @@
+# settings from configuration utility (generally set via bluetooth)
+owner_id: 123
+hub_id: 45678
+host: host.amazonaws.com
+ca_path: cert/AmazonRootCA1.pem
+cert_path: cert/thing-certificate.pem.crt
+key_path: cert/thing-private.pem.key
+
+# simulation info
+send_interval: 2
+devices: [
+	{
+		id: 10001
+		components: [
+			{
+				type: temperature
+				dir: i
+				model: DHT22
+				units: degrees_C
+			},
+			{
+				type: humidity
+				dir: i
+				model: DHT22
+				units: percent
+			},
+		],
+	},
+	{
+		id: 10002
+		components: [
+			{
+				type: CO2
+				dir: i
+				model: K-30
+				units: PPM
+			},
+		],
+	},
+	{
+		id: 10003
+		components: [
+			{
+				type: relay
+				dir: o
+			},
+		]
+	}
+]
