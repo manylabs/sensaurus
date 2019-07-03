@@ -17,8 +17,20 @@
 #define MAX_DEVICE_COUNT 6
 #define CONSOLE_BAUD 9600
 #define DEV_BAUD 38400
-#define ENABLE_BLE
 
+// Note: for BLE to build, limit as given in boards.txt need to be adjusted from 1310720 to:
+// node32smax.upload.maximum_size=1966080
+// and partition has be be adjusted, e.g. like this:
+//# Name,   Type, SubType, Offset,  Size, Flags
+//nvs,      data, nvs,     0x9000,  0x5000,
+//otadata,  data, ota,     0xe000,  0x2000,
+//app0,     app,  ota_0,   0x10000, 0x280000,
+//spiffs,   data, spiffs,  0x290000,0x170000,
+
+// uncomment to allow BLE to be operational
+//#define ENABLE_BLE
+// uncomment to allow aws iot connections
+#define ENABLE_AWS_IOT
 
 #define BUTTON_PIN 4
 #define STATUS_LED_PIN 5      
@@ -44,7 +56,6 @@
 #define HUB_CERT_UUID "d1c4d088-fd9c-4881-8fc2-656441fa2cf4"
 #define HUB_KEY_UUID "f97fee16-f4c3-48ff-a315-38dc2b985770"
 
-
 // configuration storage (will be in EEPROM)
 struct Config {
   int version;
@@ -58,6 +69,10 @@ struct Config {
   char thingCrt[1500];
   char thingPrivateKey[2000];
 } config;
+
+// set to true to allow ble init at startup. eventually, this should be moved to Config
+// as of 7/3/19: ENABLE_AWS_IOT has to be disabled when bleEnable is true.
+bool bleEnabled = false;
 
 // dump configuration to console for debugging purposes
 void dumpConfig(const Config* c) {
@@ -134,12 +149,17 @@ char actuatorsTopicName[100];
 
 // run once on startup
 void setup() {
-  initConfig();
 
   // prepare serial connections
   Serial.begin(CONSOLE_BAUD);
   Serial.println();
+  initConfig();
   Serial.println("starting");
+#ifdef ENABLE_BLE
+  if (bleEnabled) {
+    startBLE();      
+  }
+#endif // ENABLE_BLE
   for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
     devSerial[i].begin(DEV_BAUD);
   }
@@ -153,7 +173,8 @@ void setup() {
   ledcSetup(0, 5000, 8);  // set up channel 0 to use 5000 Hz with 8 bit resolution
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
-  // connect to wifi
+  Serial.printf("setup before WiFi.begin: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());  
+  // connect to wifi  
   if (config.wifiEnabled) {
     int status = WL_IDLE_STATUS;
     while (status != WL_CONNECTED) {
@@ -166,12 +187,16 @@ void setup() {
   } else {
     Serial.println("not connected to wifi");    
   }
+
+  Serial.printf("setup before awsConn.connect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());  
   setStatusLED(HIGH);
-  
+
+#ifdef ENABLE_AWS_IOT 
   // connect to AWS MQTT
   // note: some AWS IoT code based on https://github.com/jandelgado/esp32-aws-iot
   if (config.wifiEnabled) {
-    if (awsConn.connect(HOST_ADDRESS, CLIENT_ID, aws_root_ca_pem, certificate_pem_crt, private_pem_key) == 0) {
+    //if (awsConn.connect(HOST_ADDRESS, CLIENT_ID, aws_root_ca_pem, certificate_pem_crt, private_pem_key) == 0) {
+    if (awsConn.connect(HOST_ADDRESS, CLIENT_ID, aws_root_ca_pem, config.thingCrt, config.thingPrivateKey) == 0) {
       Serial.println("connected to AWS");
       delay(200);  // wait a moment before subscribing
 
@@ -189,6 +214,9 @@ void setup() {
       freezeWithError();
     }
   }
+#endif // ENABLE_AWS_IOT 
+  
+  Serial.printf("setup after awsConn.connect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());  
 
   // get network time
   if (config.wifiEnabled) {
@@ -200,6 +228,7 @@ void setup() {
   // send current status
   sendStatus();
   Serial.println("ready");
+
 }
 
 
@@ -432,7 +461,7 @@ void runCommand(const char *command, DynamicJsonDocument &doc) {
   } else if (strcmp(command, "s") == 0) {  // start sending sensor values once a second
     pollInterval = 1000;
     sendInterval = 1000;
-  } else if (strcmp(command, "start_ble") == 0) {  // request a status message
+  } else if (strcmp(command, "start_ble") == 0) {  // request a status message  
     #ifdef ENABLE_BLE
       startBLE();
     #endif
@@ -591,18 +620,44 @@ void initConfig() {
     delay(1000);
     ESP.restart();
   }  
-  config.version = FIRMWARE_VERSION;
 
-  
-  config.consoleEnabled = ENABLE_CONSOLE;
-  config.wifiEnabled = ENABLE_WIFI;
-  config.responseTimeout = RESPONSE_TIMEOUT;
-  strncpy(config.ownerId, OWNER_ID, 64);
-  strncpy(config.hubId, HUB_ID, 64);
-  strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
-  strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
-  strncpy(config.thingCrt, certificate_pem_crt, sizeof(config.thingCrt)-1);
-  strncpy(config.thingPrivateKey, private_pem_key, sizeof(config.thingPrivateKey)-1);
+  // load configuration from EEPROM if available
+  //Config myConfig;
+  EEPROM.get(0, config);
+  Serial.println("config loaded from flash memory:");
+  dumpConfig(&config);        
+
+  if (config.version != FIRMWARE_VERSION) {
+    Serial.printf("Firmware version changed from %d to %d. Perform re-configuration of this hub!\n",
+      config.version, FIRMWARE_VERSION);
+    config.version = FIRMWARE_VERSION;
+    config.consoleEnabled = ENABLE_CONSOLE;
+    config.wifiEnabled = ENABLE_WIFI;
+    config.responseTimeout = RESPONSE_TIMEOUT;
+    strncpy(config.ownerId, OWNER_ID, 64);
+    strncpy(config.hubId, HUB_ID, 64);
+    strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
+    strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
+    strncpy(config.thingCrt, certificate_pem_crt, sizeof(config.thingCrt)-1);
+    strncpy(config.thingPrivateKey, private_pem_key, sizeof(config.thingPrivateKey)-1);
+  } else if (config.version == 0) {
+    Serial.println("Firmware version loaded from EEPROM is 0. Perform configuration of this hub!");
+    config.version = FIRMWARE_VERSION;
+    config.consoleEnabled = ENABLE_CONSOLE;
+    config.wifiEnabled = ENABLE_WIFI;
+    config.responseTimeout = RESPONSE_TIMEOUT;
+    strncpy(config.ownerId, OWNER_ID, 64);
+    strncpy(config.hubId, HUB_ID, 64);
+    strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
+    strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
+    strncpy(config.thingCrt, certificate_pem_crt, sizeof(config.thingCrt)-1);
+    strncpy(config.thingPrivateKey, private_pem_key, sizeof(config.thingPrivateKey)-1);
+  } else {
+    // loaded config seems OK.  
+    Serial.printf("Loaded config - firmware version=%d.\n", config.version);
+    //strncpy(config.thingCrt, certificate_pem_crt, sizeof(config.thingCrt)-1);
+    //strncpy(config.thingPrivateKey, private_pem_key, sizeof(config.thingPrivateKey)-1);
+  }
 }
 
 
@@ -717,6 +772,8 @@ class HubKeyCallbacks : public BLECharacteristicCallbacks {
 
 
 void startBLE() {
+  Serial.printf("startBLE: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());
+  
   BLEDevice::init("Sensaurus");
   BLEServer *server = BLEDevice::createServer();
   BLEService *service = server->createService(BLE_SERVICE_UUID);
@@ -738,12 +795,11 @@ void startBLE() {
   characteristic->setCallbacks(new HubCertCallbacks());
   characteristic = service->createCharacteristic(HUB_KEY_UUID, BLECharacteristic::PROPERTY_WRITE);
   characteristic->setCallbacks(new HubKeyCallbacks());
-
   service->start();
   BLEAdvertising *advertising = server->getAdvertising();
+  //Serial.println("startBLE: Started advertising");
   advertising->start();
 }
 
 
 #endif  // ENABLE_BLE
-
