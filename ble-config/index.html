@@ -1,0 +1,85 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manylabs Sensaurus Settings Editor</title>
+    <meta name="description" content="Manylabs Sensaurus Settings Editor">
+    <link rel="stylesheet" href="static/css/styles.css">
+    <link href="static/css/font-awesome-1.11.3.css" rel="stylesheet">
+    <script src="static/js/jquery-1.11.3.min.js"></script>
+  </head>
+  <body>
+    <div id="container">
+      <div id="selectDevice">
+        <div id="statusText" >
+          <img src="static/images/sensaurus-small-15.jpg" id="sensaurusImg"  width="200"/>
+        </div>
+        <div id="buttonDiv" onClick="">
+          <button type="button" class="button-connect" id="selectButton" title="Select a hub/ESP32 unit that is available in BLE mode for configuration/settings." >Select Hub</button>
+          <button type="button" class="button-connect" id="reconnectButton" disabled title="Reconnect to a hub that had been previously selected and connected to.">Reconnect</button>
+        </div>
+      </div>
+          <div id="formDiv">
+            <form>
+                  <h1>Sensaurus Settings Editor (BLE)</h1>
+              <div class="contentform">
+                  <div id="sendmessage"> Your message has been sent successfully. Thank you. </div>
+                  <div class="leftcontact">
+                      <div class="form-group">
+                              <p>WIFI Network</p>
+                              <span <i></i></span>
+                                  <input type="text" name="wifiNetwork" id="wifiNetwork" data-rule="required"/>
+                          <div class="validation"></div>
+                      </div>
+
+                      <div class="form-group">
+                      <p>WIFI Password</p>
+                      <span ></span>
+                          <input type="text" name="wifiPassword" id="wifiPassword" data-rule="required" />
+                          <div class="validation"></div>
+                      </div>
+
+                      <div class="form-group">
+                      <p>Owner ID</p>
+                      <span ></span>
+                          <input type="text" name="ownerId" id="ownerId" data-rule="required" />
+                          <div class="validation"></div>
+                      </div>
+
+                      <div class="form-group">
+                      <p>Hub ID</p>
+                      <span ></span>
+                          <input type="text" name="hubId" id="hubId" data-rule="required" />
+                          <div class="validation"></div>
+                      </div>
+
+
+              </div>
+
+                <div class="rightcontact">
+                        <div class="form-group">
+                          <p>Thing Certificate</p>
+                              <textarea name="thingCrt" id="thingCrt" rows="14" data-rule="required"></textarea>
+                              <div class="validation"></div>
+                        </div>
+                        <div class="form-group">
+                          <p>Thing Private Key</p>
+                              <textarea name="thingPrivateKey" id="thingPrivateKey" rows="14" data-rule="required"></textarea>
+                              <div class="validation"></div>
+                        </div>
+                </div>
+              </div>
+              <button type="button" id="save" class="button-send" onClick="saveSettings();" disabled title="Send/save settings to hub and instruct the hub to exit BLE mode (reboot)." >Save</button>
+
+          </form>
+        </div>
+      <!-- Default form group -->
+
+
+    </div>
+
+    <script src="static/js/sensaurusble.js"></script>
+    <script src="static/js/app.js"></script>
+  </body>
+</html>
