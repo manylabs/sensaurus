@@ -16,10 +16,10 @@ body {
   font-family: Roboto;
 }
 #sensaurusImg {
-  padding-top: 50px;
+  padding-top: 20px;
 }
 
-#statusText {
+#statusTextDiv {
   top: 10px;
   left: 0;
   right: 0;
@@ -29,8 +29,16 @@ body {
   width: 400px;
   overflow-x: visible;
   cursor: default;
-  padding: 5px 0;
   -webkit-user-select: none;
+  display: flex;
+  justify-content: center;
+}
+
+#statusText {
+  display: none;
+  font-size: 14px;
+  height: 60px;
+  min-width: 360px;  
 }
 
 #buttonDiv {
@@ -39,7 +47,6 @@ body {
   font-size: 16px;
   width: 300px;
   overflow-x: visible;
-  padding: 5px 0;
   -webkit-user-select: none;
 }
 

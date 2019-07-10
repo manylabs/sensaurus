@@ -142,27 +142,30 @@ It will send a configuration message to the hub and listen for messages from the
 2.  Copy your config.hjson file to the `hub-remote-test` folder.
 3.  Run `remote_test.py`.
 
-## Settings via BLE and Hub Dual Mode
+## Hub Operation Modes, Settings via BLE
 
 Sensaurus allows configuration via Bluetooth Low Energy (BLE). But in order to do that we have to overcome memory
-limitation of ESP32 where both BLE and AWS IOT doesn't fit into memory. Therefore, when in BLE mode, AWS IOT
-will be disabled and switching modes will require reboot.
+limitation of ESP32 where both BLE and AWS IOT doesn't fit into memory. Therefore the hub may operate at any
+time in one of two mode: BLE mode and AWS IOT mode.
+When in BLE mode, AWS IOT will be disabled and switching modes will require a reboot.
 
-When in BLE mode, configuration can be changed using Web based Sensaurus BLE Configuration Client in ble-config directory.
+When in BLE mode, settings can be changed using Web based Sensaurus BLE Configuration Client in ble-config directory.
 
 When the hub starts up, it will normally start in AWS IOT mode.
 If during the start up, hub can't connect to WIFI it will start in BLE mode.
 
-There are 3 ways to switch between BLE mode and AWS IOT mode:
+There are 4 ways to switch between BLE mode and AWS IOT mode:
 
-* send command "bleStart" (to switch to BLE mode) or "bleExit" (to exit BLE mode and switch to AWS IOT mode)
+* when hub is started and in operation, send command "bleStart" (to switch to BLE mode) or "bleExit" (to exit BLE mode and switch to AWS IOT mode)
   via BLE command attribute or via AWS IOT/MQTT command
-* press settings/configuration button on the hub (this will switch to BLE mode)
-* press the restart button on the hub (this will switch to AWS IOT mode)
+* press the restart button on the hub and keep pressing the configuration button, starting about a second after pressing reset
+  and keep pressing for a few seconds. The configuration button press will be detected right after wifi is connected.
+* when hub is started and in operation, in either mode, press settings/configuration button on the hub (this will reboot and switch to BLE mode)
+* press the restart button on the hub (this will reboot and switch to AWS IOT mode)
 
 Note:
-As of July 2019, the default button to use to force Hub that's running in AWS IOT mode is the boot button (GPIO0 T1 on ESP32 node32s).
-This is temporary in order to allow those without external button and crumb board to test and will eventually be changed
+As of July 2019, the default button to use to force Hub that's running in AWS IOT mode into BLE mode is the boot button (GPIO0 T1 on ESP32 node32s).
+This is temporary in order to allow those without external button and breadboard to test and will eventually be changed
 to use GPIO2 T0 (pin 4).
 
 See #define USE_BUTTON_BOOT in source code to change the behavior.
@@ -180,6 +183,7 @@ and follow these steps:
 * select the hub and click "Pair" button
 * the fields will populate with current values from the hub
 * modify the fields to reflect the required new settings
-* click on "Save" button. This will save settings to the hub, in hub's EEPROM and restart the hub
+* click on "Save" button. This will send settings via BLE to the hub, the hub will save them in EEPROM and restart the hub in AWS IOT mode
 
+Note: if settings haven't changed, the hub will not save anything but will restart the hub in AWS IOT mode
 To repeat the settings procedure, switch the hub to BLE mode and click "Select Hub" or "Reconnect" button.

@@ -6,12 +6,20 @@ var statusText = document.querySelector('#statusText');
 var button = document.querySelector('#selectButton');
 //var reconnectButton = document.querySelector('#reconnectButton');
 
+function disconnectHandler() {
+  statusText.textContent += '\nHub disconnected.';
+  $('#reconnectButton').prop("disabled",false);
+}
+
 function startConnect() {
+  sensaurusImg.style.display = "none";
+  statusText.style.display = "block";
   statusText.textContent = 'Connecting...';
   sensaurusBle.connect(() => {
-    $('#selectButton').prop("disabled",true);
+    $('#selectButton').prop("disabled", false);
     $('#save').prop("disabled",true);
     $('#reconnectButton').prop("disabled",false);
+    statusText.textContent += '\nHub disconnected.';
     }
   )
   .then( () =>  {
@@ -56,6 +64,8 @@ function saveSettings() {
   sensaurusBle.wifiPassword = $('#wifiPassword').val();
   sensaurusBle.ownerId = $('#ownerId').val();
   sensaurusBle.hubId = $('#hubId').val();
+  sensaurusBle.thingCrt = $('#thingCrt').val();
+  sensaurusBle.thingPrivateKey = $('#thingPrivateKey').val();
   sensaurusBle.saveSettings()
   .then( () => {
     sensaurusBle.sendCmd("bleExit")
@@ -67,6 +77,10 @@ function saveSettings() {
     console.log(msg)
     statusText.textContent = msg;
   })
+  .catch(error => {
+    console.log("save settings failed: ", error)
+    statusText.textContent = error;
+  });
 }
 
 function clear() {

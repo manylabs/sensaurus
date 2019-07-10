@@ -14,6 +14,48 @@ and
 
 */
 
+var BLE_SERVICE_UUID = '9ec18803-e34a-4882-b61d-864247da821d';
+var WIFI_NETWORK_UUID  = "e2ccd120-412f-4a99-922b-aca100637e2a";
+var WIFI_PASSWORD_UUID  = "30db3cd0-8eb1-41ff-b56a-a2a818873c34";
+var OWNER_ID_UUID  = "af74141f-3c60-425a-9402-62ec79b58c1a";
+var HUB_ID_UUID  = "e4636699-367b-4838-a421-1904cf95f869";
+var HUB_CERT_UUID  = "d1c4d088-fd9c-4881-8fc2-656441fa2cf4";
+var HUB_KEY_UUID  = "f97fee16-f4c3-48ff-a315-38dc2b985770";
+var BLE_CMD_UUID  = "93311ce4-a1e4-11e9-a3dc-60f81dcdd3b6";
+
+async function writeCharacteristicsInChunks(charUuid, value) {
+  //let p0 = new Promise((resolve, reject) => {
+
+    let promise = sensaurusBle._writeCharacteristicValue(charUuid, sensaurusBle._encodeString("clear"));
+    let result = await promise;
+    var index = 0;
+    while(index < value.length) {
+      var part = value.slice(index, index+100);
+      //console.log("f _writeCharacteristicValue(...: part=", part);
+      let result = await sensaurusBle._writeCharacteristicValue(charUuid, sensaurusBle._encodeString(part))
+      // sometimes, next chunk doesn't get written, delay a bit
+      //let promise = new Promise((resolve, reject) => {
+      //  setTimeout(() => resolve("done!"), 10)
+      //});
+      //await promise;
+      index += 100;
+    }
+    //resolve();
+  //});
+  //return p0;
+}
+
+async function writeChunkedCharacteristics() {
+  // only write key/cert characteristics if values are non-empty
+  if (sensaurusBle.thingCrt.length > 0) {
+    await writeCharacteristicsInChunks(HUB_CERT_UUID, sensaurusBle.thingCrt);
+  }
+  if (sensaurusBle.thingPrivateKey.length > 0) {
+    await writeCharacteristicsInChunks(HUB_KEY_UUID, sensaurusBle.thingPrivateKey);
+  }
+}
+
+
 (function() {
   'use strict';
 
@@ -40,14 +82,6 @@ and
   // #define HUB_KEY_UUID "f97fee16-f4c3-48ff-a315-38dc2b985770"
 
   //var HPS_SERVICE_UUID = '9ec18803-e34a-4882-b61d-864247da821d';
-  var BLE_SERVICE_UUID = '9ec18803-e34a-4882-b61d-864247da821d';
-  var WIFI_NETWORK_UUID  = "e2ccd120-412f-4a99-922b-aca100637e2a";
-  var WIFI_PASSWORD_UUID  = "30db3cd0-8eb1-41ff-b56a-a2a818873c34";
-  var OWNER_ID_UUID  = "af74141f-3c60-425a-9402-62ec79b58c1a";
-  var HUB_ID_UUID  = "e4636699-367b-4838-a421-1904cf95f869";
-  var HUB_CERT_UUID  = "d1c4d088-fd9c-4881-8fc2-656441fa2cf4";
-  var HUB_KEY_UUID  = "f97fee16-f4c3-48ff-a315-38dc2b985770";
-  var BLE_CMD_UUID  = "93311ce4-a1e4-11e9-a3dc-60f81dcdd3b6";
 
   // set to false to minimize console.log printing
   var verbose = true;
@@ -57,6 +91,13 @@ and
     if (verbose) {
       console.log(text);
     }
+  }
+
+  function _disconnectListener() {
+    log('Device disconnected');
+    // connect();
+    sensaurusBle._connected = false;
+    disconnectHandler();
   }
 
   /**
@@ -110,30 +151,24 @@ and
       ]);
     }
 
-    connect(disconnectListener) {
 
-      //console.log("deb1");
+    connect(disconnectListener) {
       return navigator.bluetooth.requestDevice({filters:[{services:[ BLE_SERVICE_UUID ]}]})
-      //return navigator.bluetooth.requestDevice({filters:[{services:[ 0x180F ]}]})
-      //return navigator.bluetooth.requestDevice({filters:[{services:[ 'heart_rate' ]}]})
       .then(device => {
-        console.log("deb2", device);
+        // remove event listener if this instance was connected before
+        if (this.device) {
+          this.device.removeEventListener('gattserverdisconnected', _disconnectListener, true);
+        }
+        //console.log("connect: device=", device);
         this.device = device;
-        this.device.addEventListener('gattserverdisconnected', () => {
-            log('Device disconnected');
-            // connect();
-            this._connected = false;
-            disconnectListener();
-        });
+        this.device.addEventListener('gattserverdisconnected', _disconnectListener);
         return device.gatt.connect();
-        //log("Connect: ret=", ret);
-        //return ret;
       })
       .then(server => {
         this._connected = true;
         log("Calling getPrimaryService...")
         this.server = server;
-        console.log("deb3", server);
+        //console.log("getPrimaryService: ", server);
         return Promise.all([
           server.getPrimaryService(BLE_SERVICE_UUID).then(service => {
             //console.log("deb3a", service);
@@ -142,6 +177,8 @@ and
               this._cacheCharacteristic(service, WIFI_PASSWORD_UUID),
               this._cacheCharacteristic(service, OWNER_ID_UUID),
               this._cacheCharacteristic(service, HUB_ID_UUID),
+              this._cacheCharacteristic(service, HUB_CERT_UUID),
+              this._cacheCharacteristic(service, HUB_KEY_UUID),
               this._cacheCharacteristic(service, BLE_CMD_UUID),
             ])
           })
@@ -180,10 +217,6 @@ and
             });
           });
         });
-        //return Promise.all([p1, p2, p3, p4]).then( values => {
-        //  //var pw = '*'.repeat(this.wifiPassword.length);
-        //  console.log("getAllCharacteristicValues.5 values=", this.wifiNetwork, this.wifiPassword, this.ownerId, this.hubId, p1, p2, p3, p4);
-        //});
       });
       return p;
 
@@ -224,28 +257,28 @@ and
       console.log("saveSettings values=", this.wifiNetwork, pw, this.ownerId, this.hubId);
       const p0 = new Promise((resolve, reject) => {
         var p = this._writeCharacteristicValue(WIFI_NETWORK_UUID, this._encodeString(this.wifiNetwork));
-        p.then(value => {
+        p.then(() => {
           p = this._writeCharacteristicValue(WIFI_PASSWORD_UUID, this._encodeString(this.wifiPassword));
-          p.then(value => {
+          p.then(() => {
             p = this._writeCharacteristicValue(OWNER_ID_UUID, this._encodeString(this.ownerId));
-            p.then(value => {
+            p.then(() => {
               this._writeCharacteristicValue(HUB_ID_UUID, this._encodeString(this.hubId))
-              .then(value => {
-                resolve("done");
+              .then(() => {
+                writeChunkedCharacteristics()
+                .then(() => {
+                  console.log("saveSettings done writeChunkedCharacteristics");
+                  resolve();
+                })
+                .catch(error => {
+                  console.log("saveSettings failed: ", error);
+                  reject(error);
+                });
               });
             });
           });
         });
       });
       return p0;
-      //let data = this._encodeString(this.ownerId);
-      /* this works on Chrome MACOSX, not on Chrome Android  */
-      /*
-      this._writeCharacteristicValue(WIFI_NETWORK_UUID, this._encodeString(this.wifiNetwork));
-      this._writeCharacteristicValue(WIFI_PASSWORD_UUID, this._encodeString(this.wifiPassword));
-      this._writeCharacteristicValue(OWNER_ID_UUID, this._encodeString(this.ownerId));
-      this._writeCharacteristicValue(HUB_ID_UUID, this._encodeString(this.hubId));
-      */
     }
 
     // Send command (write command characteristic)
@@ -278,7 +311,10 @@ and
     }
     _writeCharacteristicValue(characteristicUuid, value) {
       let characteristic = this._characteristics.get(characteristicUuid);
-      return characteristic.writeValue(value);
+      //return characteristic.writeValue(value);
+      var ret = characteristic.writeValue(value);
+      //console.log("_writeCharacteristicValue: ret=", ret)
+      return ret;
     }
     _startNotifications(characteristicUuid) {
       let characteristic = this._characteristics.get(characteristicUuid);

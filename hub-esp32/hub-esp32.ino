@@ -2,6 +2,7 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include "AWS_IOT.h"
+//#include "GeneralUtils.h"
 #include "WiFi.h"
 #include "NTPClient.h"
 #include "WiFiUdp.h"
@@ -12,6 +13,21 @@
 #include "SensaurDevice.h"
 #include "settings.h"
 
+// set to verbose to get more information from components during debugging
+// enable esp_log_level_set("*", ESP_LOG_VERBOSE); in setup() and CONFIG_LOG_DEFAULT_LEVEL
+
+// in sdkconfig.h, change CONFIG_LOG_DEFAULT_LEVEL
+//  comment out CONFIG_ARDUHAL_ESP_LOG definition to see serial output from ESP_LOGx
+// also see 
+// https://github.com/espressif/arduino-esp32/issues/565
+// /hardware/espressif/esp32/tools/sdk/include/config/sdkconfig.h
+// #define CONFIG_LOG_DEFAULT_LEVEL 5
+//#define CONFIG_ARDUHAL_ESP_LOG 1
+
+// uncomment this line get more information from sensaurus during debugging
+//#define CONFIG_LOG_DEFAULT_LEVEL 5
+#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
+#include "esp_log.h"
 
 #define FIRMWARE_VERSION 2  // firmware version for this application: EEPROM will be erased if version incremented
 #define MAX_DEVICE_COUNT 6
@@ -36,17 +52,21 @@
 // use boot button for configuration (GPIO0 T1) instead of GPIO4 (T0) if testing with vanilla standalone esp32
 #define USE_BUTTON_BOOT
 
+static const char* TAG = "sensaurus";
+
 // max number of time WIFI connection is retried
 const int MAX_WIFI_RETRIES = 3;
 // ------------
 
 // BLE mode indicator if 0, we are in wifi/iot-aws mode
+// noinit attribute preserves the value during a software reset, thus allowing switching
+//   to bleMode without writing to EEPROM
 static RTC_NOINIT_ATTR  int bleMode = 0;
 
 // 1 = bleExit
 // 2 = bleStart
 static int swReboot = 0;
-// indicates if settings have been modified and need to be changed at "bleExit"
+// indicates if settings have been modified and need to be save to EEPROM at "bleExit"
 static bool dirty = false;
 
 //./espressif/esp32/variants/node32s/pins_arduino.h 
@@ -108,10 +128,12 @@ bool bleEnabled = false;
 
 // dump configuration to console for debugging purposes
 void dumpConfig(const Config* c) {
-  if (config.consoleEnabled) {
+  if (config.consoleEnabled) {    
+    //GeneralUtils::dumpInfo();
     uint64_t chipid = ESP.getEfuseMac();
     uint16_t id_high2 = (uint16_t)(chipid>>32);
     uint32_t id_low4 = (uint32_t)chipid;
+    /*
     Serial.printf("mac=%04X%08X, size=%d; %d,...,%s,%s,%s,%s\n%s\n%s\n", id_high2, id_low4,
     //        Serial.printf("size=%d; %d,...,%s,%s,%s,%s\n%s\n%s\n", 
       sizeof(Config), 
@@ -123,7 +145,23 @@ void dumpConfig(const Config* c) {
       c->thingCrt,
       c->thingPrivateKey
       );
+    */
+    ESP_LOGV(TAG, "mac=%04X%08X, size=%d; %d,...,%s,%s,%s,%s\n%s\n%s\n", 
+        id_high2, 
+        id_low4,
+        sizeof(Config), 
+        c->version, 
+        c->ownerId, 
+        c->hubId,
+        c->wifiNetwork,
+        c->wifiPassword,
+        c->thingCrt,
+        c->thingPrivateKey
+        );  
   }  
+
+
+      
 }
 //#define EEPROM_SIZE 3000
 #define EEPROM_SIZE sizeof(Config)
@@ -181,7 +219,11 @@ char actuatorsTopicName[100];
 
 // run once on startup
 void setup() {
-
+  // uncomment this line to get more information from components during debugging
+  esp_log_level_set("*", ESP_LOG_WARN);
+  //esp_log_level_set("*", ESP_LOG_VERBOSE);
+  esp_log_level_set(TAG, ESP_LOG_VERBOSE);
+  
   // init. bleMode persistent variable if needed 
   // ESP_RST_SW Software reset via esp_restart.
   esp_reset_reason_t reason = esp_reset_reason();
@@ -231,27 +273,28 @@ void setup() {
     Serial.println("wifiEnabled is false: not connected to wifi.");    
   }
 
+
   Serial.printf("setup before awsConn.connect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());  
   setStatusLED(HIGH);
 
+  // see if config button is pressed
+  if (digitalRead(BUTTON_PIN) == LOW) {
+    Serial.println("config button pressed: switching to ble mode");
+    bleMode = true;
+  }
   if (status != WL_CONNECTED) {
     Serial.println("wifi not connected - forcing ble mode");
     bleMode = true;
   }
   Serial.printf("bleMode=%d\n", bleMode);
-#ifdef ENABLE_BLE
-  if (bleMode) {
-    startBLE();      
-  }
-#endif // ENABLE_BLE
-
+  bool awsIotConnected = false;
 #ifdef ENABLE_AWS_IOT 
   // connect to AWS MQTT
   // note: some AWS IoT code based on https://github.com/jandelgado/esp32-aws-iot
   if (!bleMode && status == WL_CONNECTED ) {
-    //if (awsConn.connect(HOST_ADDRESS, CLIENT_ID, aws_root_ca_pem, certificate_pem_crt, private_pem_key) == 0) {
     if (awsConn.connect(HOST_ADDRESS, CLIENT_ID, aws_root_ca_pem, config.thingCrt, config.thingPrivateKey) == 0) {
       Serial.println("connected to AWS");
+      awsIotConnected = true;
       delay(200);  // wait a moment before subscribing
 
       // prep topic names
@@ -265,7 +308,7 @@ void setup() {
       subscribe(actuatorsTopicName);
     } else {
       Serial.println("failed to connect to AWS");
-      freezeWithError();
+      //freezeWithError();
     }
   } else {
       Serial.println("Skipped connecting to AWS IOT");    
@@ -273,6 +316,15 @@ void setup() {
 #endif // ENABLE_AWS_IOT 
   
   Serial.printf("setup after awsConn.connect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());  
+  if (!awsIotConnected) {
+    Serial.println("AWS IOT not connected: switching to BLE mode.");
+    bleMode++;
+  }
+#ifdef ENABLE_BLE
+  if (bleMode) {
+    startBLE();      
+  }
+#endif // ENABLE_BLE
 
   // get network time
   if (status == WL_CONNECTED) {
@@ -524,20 +576,23 @@ void runCommand(const char *command, DynamicJsonDocument &doc) {
   if (strcmp(command, "p") == 0) {  // poll all the devices for their current values
     Serial.println("polling");
     doPolling();
+  } else if (strcmp(command, "d") == 0) {  // dump settings
+    Serial.println("settings currently effective:");    
+    dumpConfig(&config);        
   } else if (strcmp(command, "w") == 0) {  // eepromwrite test
     EEPROM.put(0, config);
     EEPROM.commit();     
-    Serial.println("config saved in flash memory:");      
+    Serial.println("settings have been saved to EEPROM:");      
     dumpConfig(&config);        
   } else if (strcmp(command, "r") == 0) {  // eepromread test
     Config myConfig;
     EEPROM.get(0, myConfig);
-    Serial.println("config loaded from flash memory:");
+    Serial.println("settings currently in EEPROM:");
     dumpConfig(&myConfig);        
   } else if (strcmp(command, "s") == 0) {  // start sending sensor values once a second
     pollInterval = 1000;
     sendInterval = 1000;
-  } else if (strcmp(command, "start_ble") == 0) {  // request a status message  
+  } else if (strcmp(command, "start_ble") == 0) {  // invoke startBLE without rebooting
     #ifdef ENABLE_BLE
       startBLE();
     #endif
@@ -566,11 +621,11 @@ void runCommand(const char *command, DynamicJsonDocument &doc) {
     }
     devStream[deviceIndex].println(command + 2);
     waitForResponse(deviceIndex);
-  } else if (!strcmp(command, BLE_CMD_BLE_START)) {
+  } else if (!strcmp(command, BLE_CMD_BLE_START)) { // startBLE: reboot into BLE mode
       // mark unit for software reboot (start BLE mode)
       bleMode++;
       swReboot = 2;
-  } else if (!strcmp(command, BLE_CMD_BLE_EXIT)) {
+  } else if (!strcmp(command, BLE_CMD_BLE_EXIT)) { // exitBLE: reboot into AWS IOT mode
       // mark unit for software reboot (exit BLE mode)
       bleMode = 0;
       swReboot = 1;
@@ -720,8 +775,8 @@ void initConfig() {
     config.responseTimeout = RESPONSE_TIMEOUT;
     strncpy(config.ownerId, OWNER_ID, 64);
     strncpy(config.hubId, HUB_ID, 64);
-    strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
-    strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
+    //strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
+    //strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
     strncpy(config.thingCrt, certificate_pem_crt, sizeof(config.thingCrt)-1);
     strncpy(config.thingPrivateKey, private_pem_key, sizeof(config.thingPrivateKey)-1);
   } else if (config.version == 0) {
@@ -732,8 +787,8 @@ void initConfig() {
     config.responseTimeout = RESPONSE_TIMEOUT;
     strncpy(config.ownerId, OWNER_ID, 64);
     strncpy(config.hubId, HUB_ID, 64);
-    strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
-    strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
+    //strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
+    //strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
     strncpy(config.thingCrt, certificate_pem_crt, sizeof(config.thingCrt)-1);
     strncpy(config.thingPrivateKey, private_pem_key, sizeof(config.thingPrivateKey)-1);
   } else {
@@ -796,7 +851,9 @@ class WifiNetworkCallbacks : public BLECharacteristicCallbacks {
       dirty = true;
       strncpy(config.wifiNetwork, value.c_str(), sizeof(config.wifiNetwork));
     }    
-    Serial.println(config.wifiNetwork);
+    //Serial.println(config.wifiNetwork);
+    ESP_LOGI(TAG, "%s", config.wifiNetwork);    
+      
   }
 };
 
@@ -808,7 +865,8 @@ class WifiPasswordCallbacks : public BLECharacteristicCallbacks {
       dirty = true;
       strncpy(config.wifiPassword, value.c_str(), sizeof(config.wifiPassword));
     }
-    Serial.println(config.wifiPassword);
+    //Serial.println(config.wifiPassword);
+    ESP_LOGI(TAG,  "%s", config.wifiPassword);      
   }
 };
 
@@ -820,7 +878,8 @@ class OwnerIdCallbacks : public BLECharacteristicCallbacks {
       dirty = true;
       strncpy(config.ownerId, value.c_str(), sizeof(config.ownerId));
     }
-    Serial.println(config.ownerId);
+    //Serial.println(config.ownerId);
+    ESP_LOGI(TAG,  "%s", config.ownerId);      
   }
 };
 
@@ -832,7 +891,8 @@ class HubIdCallbacks : public BLECharacteristicCallbacks {
       dirty = true;
       strncpy(config.hubId, value.c_str(), sizeof(config.hubId));
     }
-    Serial.println(config.hubId);
+    //Serial.println(config.hubId);
+    ESP_LOGI(TAG,  "%s", config.hubId);      
   }
 };
 
@@ -845,7 +905,7 @@ class CmdCallbacks : public BLECharacteristicCallbacks {
       if (dirty) {
         EEPROM.put(0, config);
         EEPROM.commit();
-        Serial.println("config saved in flash memory:");
+        ESP_LOGI(TAG, "config saved in flash memory:");
         dumpConfig(&config);
       } else {
         Serial.println("config save skipped - nothing modified");
@@ -857,7 +917,7 @@ class CmdCallbacks : public BLECharacteristicCallbacks {
       bleMode++;
       swReboot = 2;
     } else {
-      Serial.printf("BLE command not recognized: %s\n", value.c_str());      
+      ESP_LOGE(TAG, "BLE command not recognized: %s\n", value.c_str());      
     }
   }
 };
@@ -866,14 +926,20 @@ class CmdCallbacks : public BLECharacteristicCallbacks {
 class HubCertCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *characteristic) {
     std::string value = characteristic->getValue();
+    dirty = true;
     if (value == "clear") {
       config.thingCrt[0] = 0;
     } else {
+        // TODO: use strncpy to copy at least partial value contents if total length would
+        //   excceed capacity 
       if (strlen(config.thingCrt) + strlen(value.c_str()) < sizeof(config.thingCrt) - 1) {
         strcat(config.thingCrt, value.c_str());
       }
     }
-    Serial.println(strlen(config.thingCrt));
+    //Serial.println(strlen(config.thingCrt));
+    //Serial.printf("HubCertCallbacks: %d %s", strlen(config.thingCrt), config.thingCrt);
+    //Serial.printf("HubCertCallbacks: current length=%d\n", strlen(config.thingCrt));
+    ESP_LOGI(TAG, "HubCertCallbacks: current length=%d\n", strlen(config.thingCrt));
   }
 };
 
@@ -881,6 +947,7 @@ class HubCertCallbacks : public BLECharacteristicCallbacks {
 class HubKeyCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *characteristic) {
     std::string value = characteristic->getValue();
+    dirty = true;
     if (value == "clear") {
       config.thingPrivateKey[0] = 0;
     } else {
@@ -888,14 +955,15 @@ class HubKeyCallbacks : public BLECharacteristicCallbacks {
         strcat(config.thingPrivateKey, value.c_str());
       }
     }
-    Serial.println(strlen(config.thingPrivateKey));
+    //Serial.println(strlen(config.thingPrivateKey));
+    //Serial.printf("HubKeyCallbacks: current length=%d\n", strlen(config.thingPrivateKey));
+    ESP_LOGI(TAG, "HubKeyCallbacks: current length=%d\n", strlen(config.thingPrivateKey));
   }
 };
 
 
 void startBLE() {
-  Serial.printf("startBLE: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());
-  
+  ESP_LOGD(TAG, "startBLE: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());
   BLEDevice::init("Sensaurus");
   BLEServer *server = BLEDevice::createServer();
   BLEService *service = server->createService(BLE_SERVICE_UUID);
@@ -928,12 +996,11 @@ void startBLE() {
   advertising->setScanResponse(true);
   advertising->setMinPreferred(0x06);  // functions that help with iPhone connections issue
   advertising->setMinPreferred(0x12);
-  BLEDevice::startAdvertising();
+  //BLEDevice::startAdvertising();
+  advertising->start();
   
-  Serial.println("startBLE: Started advertising");
-  //advertising->start();
-
-  
+  ESP_LOGD(TAG, "startBLE: Started advertising");
+  ESP_LOGD(TAG, "startBLE: after: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());
 }
 
 

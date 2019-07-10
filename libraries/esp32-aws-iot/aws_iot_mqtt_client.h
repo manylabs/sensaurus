@@ -141,6 +141,7 @@ typedef struct {
 	uint16_t usernameLen;			///< Username Length. 16 bit unsigned integer
 	char *pPassword;			///< Not used in the AWS IoT Service, will need to be cstring if used
 	uint16_t passwordLen;			///< Password Length. 16 bit unsigned integer
+	uint16_t connectRetries;	///< Number of retries in connect. 16 bit unsigned integer
 } IoT_Client_Connect_Params;
 extern const IoT_Client_Connect_Params iotClientConnectParamsDefault;
 
