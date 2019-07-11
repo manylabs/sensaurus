@@ -27,7 +27,7 @@ class Hub(object):
                       cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLSv1_2, ciphers=None)
         self.mqttc.connect(self.config['host'], 8883, keepalive=60)
         self.mqttc.loop_start()
-        self.mqttc.subscribe('%s/hub/%s/config' % (self.owner_id, self.id))
+        self.mqttc.subscribe('%s/hub/%s/command' % (self.owner_id, self.id))
         self.mqttc.subscribe('%s/hub/%s/actuators' % (self.owner_id, self.id))
 
     def on_connect(self, client, userdata, flags, rc):
@@ -36,13 +36,18 @@ class Hub(object):
 
     # handle incoming messages on subscribed topics
     def on_message(self, client, userdata, msg):
-        if msg.topic.endswith('config'):
+        if msg.topic.endswith('command'):
             message = json.loads(msg.payload)
-            if 'send_interval' in message:
+            command = message['command']
+            if command == 'req_status':
+                self.send_status()
+            elif command == 'req_devices':
+                self.send_device_info()
+            elif command == 'set_send_interval':
                 self.send_interval = message['send_interval']
                 print('send interval: %.2f seconds' % self.send_interval)
-            if 'firmware_url' in message:
-                print('firmware update: %s' % message['firmware_url'])
+            elif command == 'update_firmware':
+                print('firmware update: %s' % message['url'])
         elif msg.topic.endswith('actuators'):
             message = json.loads(msg.payload)
             for (k, v) in message.items():
@@ -63,6 +68,7 @@ class Hub(object):
         topic_name = '%s/hub/%s/status' % (self.owner_id, self.id)
         self.mqttc.publish(topic_name, json.dumps(message))
         self.status_sent = True
+        print('sent status');
 
     # send info about devices currently connected to this hub
     def send_device_info(self):
@@ -77,6 +83,7 @@ class Hub(object):
             self.mqttc.publish(topic_name, self.id, qos=1)  # send hub ID for this device
         topic_name = '%s/hub/%s/devices' % (self.owner_id, self.id)
         self.mqttc.publish(topic_name, json.dumps(device_infos), qos=1)  # send list of device info dictionaries
+        print('sent %d devices' % len(device_infos))
 
     # send sensor values from devices connected to this hub
     def send_sensor_values(self):
