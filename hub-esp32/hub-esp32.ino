@@ -1,4 +1,5 @@
 #include <EEPROM.h>
+#include <ArduinoOTA.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include "AWS_IOT.h"
@@ -29,25 +30,29 @@
 #define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
 #include "esp_log.h"
 
-#define FIRMWARE_VERSION 2  // firmware version for this application: EEPROM will be erased if version incremented
+// firmware version for this application: EEPROM will be erased and configuration needed
+//  if version is incremented
+#define FIRMWARE_VERSION 2  
 #define MAX_DEVICE_COUNT 6
 //#define CONSOLE_BAUD 9600
 #define CONSOLE_BAUD 115200
 #define DEV_BAUD 38400
 
-// Note: for BLE to build, limit as given in boards.txt need to be adjusted from 1310720 to:
-// node32smax.upload.maximum_size=1966080
+// Note: for BLE to build, maximum_size specified in boards.txt needs to be adjusted from 1310720 to:
+// node32smax.upload.maximum_size=1900544
 // and partition has be be adjusted, e.g. like this:
-//# Name,   Type, SubType, Offset,  Size, Flags
-//nvs,      data, nvs,     0x9000,  0x5000,
-//otadata,  data, ota,     0xe000,  0x2000,
-//app0,     app,  ota_0,   0x10000, 0x280000,
-//spiffs,   data, spiffs,  0x290000,0x170000,
+// # Name,   Type, SubType, Offset,  Size, Flags
+// nvs,      data, nvs,     0x9000,  0x5000,
+// otadata,  data, ota,     0xe000,  0x2000,
+// app0,     app,  ota_0,   0x10000, 0x1D0000,
+// app1,     app,  ota_1,   0x1E0000,0x1D0000,
+// spiffs,   data, spiffs,  0x3B0000,0x50000,
 
 // uncomment to allow BLE to be operational
 #define ENABLE_BLE
 // uncomment to allow aws iot connections
 #define ENABLE_AWS_IOT
+#define ENABLE_OTA
 
 // use boot button for configuration (GPIO0 T1) instead of GPIO4 (T0) if testing with vanilla standalone esp32
 #define USE_BUTTON_BOOT
@@ -125,6 +130,47 @@ struct Config {
 // set to true to allow ble init at startup. eventually, this should be moved to Config
 // as of 7/3/19: ENABLE_AWS_IOT has to be disabled when bleEnable is true.
 bool bleEnabled = false;
+
+
+#ifdef ENABLE_OTA
+// setup OTA
+void setupOTA() {
+  // Hostname defaults to esp3232-[MAC]
+  ArduinoOTA.setHostname(config.hubId);
+
+  ArduinoOTA
+    .onStart([]() {
+      String type;
+      if (ArduinoOTA.getCommand() == U_FLASH)
+        type = "sketch";
+      else // U_SPIFFS
+        type = "filesystem";
+
+      // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+      ESP_LOGI(TAG, "Start updating %s", type);
+    })
+    .onEnd([]() {
+      Serial.println("\nEnd");
+    })
+    .onProgress([](unsigned int progress, unsigned int total) {
+      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    })
+    .onError([](ota_error_t error) {
+      Serial.printf("Error[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+
+  ArduinoOTA.begin();
+
+  Serial.print("OTA ready. IP address:");
+  Serial.printf("%s", WiFi.localIP());
+  
+}
+#endif // ENABLE_OTA
 
 // dump configuration to console for debugging purposes
 void dumpConfig(const Config* c) {
@@ -331,6 +377,9 @@ void setup() {
     timeClient.begin();
     timeClient.setTimeOffset(0);  // we want UTC
     updateTime();
+
+    setupOTA();
+
   }
 
   if (status == WL_CONNECTED) {
@@ -344,7 +393,8 @@ void setup() {
 
 // run repeatedly
 void loop() {
-
+  ArduinoOTA.handle();  
+  
   // process any incoming data from the hub computer
   while (Serial.available()) {
     processByteFromComputer(Serial.read());
@@ -638,8 +688,15 @@ void sendStatus() {
     Serial.print("sending status: ");
   }
   DynamicJsonDocument doc(256);
-  doc["wifi_network"] = WIFI_SSID;
-  // doc["wifi_password"] = WIFI_PASSWORD;  // leave out wifi password for now
+  doc["wifi_network"] = config.wifiNetwork;
+  doc["version"] = config.version;
+  // useful for tracing updated firmware where version has not changed, such as when testing OTA
+  doc["built"] = __TIMESTAMP__;
+  // useful for testing OTA
+  char localIp[80];
+  strncpy(localIp, WiFi.localIP().toString().c_str(), sizeof(localIp)-1);
+  doc["localIP"] = localIp;
+  // doc["wifi_password"] = config.wifiPassword;  // leave out wifi password for now
   doc["host"] = HOST_ADDRESS;
   String topicName = String(config.ownerId) + "/hub/" + config.hubId + "/status";
   String message;

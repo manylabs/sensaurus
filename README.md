@@ -61,10 +61,12 @@ To build with changed partitions and be able to test BLE mode:
 
 * create a new partition description file max.csv and place it in espressif/esp32/tools/partitions:
 
+  # Name,   Type, SubType, Offset,  Size, Flags
   nvs,      data, nvs,     0x9000,  0x5000,
   otadata,  data, ota,     0xe000,  0x2000,
-  app0,     app,  ota_0,   0x10000, 0x280000,
-  spiffs,   data, spiffs,  0x290000,0x170000,
+  app0,     app,  ota_0,   0x10000, 0x1D0000,
+  app1,     app,  ota_1,   0x1E0000,0x1D0000,
+  spiffs,   data, spiffs,  0x3B0000,0x50000,
 
  * restart Arduino IDE and select the new board
  * build and test
@@ -72,10 +74,12 @@ To build with changed partitions and be able to test BLE mode:
 ---
 #### Board definition for  node32smax: Node32s Dev Module (Max Memory)
 
+Note: maximum_size=1900544 corresponds to app0/app1 size 0x1D0000.
+
   node32smax.name=Node32s Dev Module (Max Memory)
 
   node32smax.upload.tool=esptool_py
-  node32smax.upload.maximum_size=1703936
+  node32smax.upload.maximum_size=1900544
   node32smax.upload.maximum_data_size=327680
   node32smax.upload.wait_for_upload_port=true
 
@@ -187,3 +191,27 @@ and follow these steps:
 
 Note: if settings haven't changed, the hub will not save anything but will restart the hub in AWS IOT mode
 To repeat the settings procedure, switch the hub to BLE mode and click "Select Hub" or "Reconnect" button.
+
+## Testing OTA
+
+As of July, 2019 OTA is implemented without HTTP support, via Arduino IDE, as described here:
+
+https://diyprojects.io/arduinoota-esp32-wi-fi-ota-wireless-update-arduino-ide/
+https://lastminuteengineers.com/esp8266-ota-updates-arduino-ide/
+
+To test OTA:
+
+* make sure a recent version with OTA support has been burned via serial port - that allows
+  the unit to accept OTA updates
+* in Arduino IDE, switch port to a network port corresponding to the unit IP
+  If you don't see the network port, try restarting Adruino IDE
+* perform update via IDE - you'll see progress "..." as the firmware is updated
+* you can verify using test_remote.py tool that a status has been received from the hub with a recent
+  built timestamp, e.g. like this:
+
+  {'wifi_network': 'Fatra', 'version': 2, 'built': 'Tue Jul 16 09:46:03 2019', 'host': 'a1zmu4vkfpn2wo-ats.iot.us-west-2.amazonaws.com'}
+
+Note: the hub will accept OTA updates in both BLE mode (as long as WIFI is connected) and AWS IOT mode.
+If you don't see network port for your hub, make sure your development machine is on the same network or WIFI, and also
+see known problems/troubleshooting tips for Arduino IDE here:
+https://forum.arduino.cc/index.php?topic=575560.0
