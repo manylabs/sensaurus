@@ -34,8 +34,8 @@
 //  if version is incremented
 #define FIRMWARE_VERSION 2  
 #define MAX_DEVICE_COUNT 6
-//#define CONSOLE_BAUD 9600
-#define CONSOLE_BAUD 115200
+#define CONSOLE_BAUD 9600
+//#define CONSOLE_BAUD 115200
 #define DEV_BAUD 38400
 
 // Note: for BLE to build, maximum_size specified in boards.txt needs to be adjusted from 1310720 to:
@@ -49,13 +49,13 @@
 // spiffs,   data, spiffs,  0x3B0000,0x50000,
 
 // uncomment to allow BLE to be operational
-#define ENABLE_BLE
+//#define ENABLE_BLE
 // uncomment to allow aws iot connections
 #define ENABLE_AWS_IOT
 #define ENABLE_OTA
 
 // use boot button for configuration (GPIO0 T1) instead of GPIO4 (T0) if testing with vanilla standalone esp32
-#define USE_BUTTON_BOOT
+//#define USE_BUTTON_BOOT
 
 static const char* TAG = "sensaurus";
 
@@ -502,8 +502,12 @@ void subscribe(const char *topicName) {
 void messageHandler(char *topicName, int payloadLen, char *payLoad) {
   DynamicJsonDocument doc(256);
   deserializeJson(doc, payLoad);
-  String command = doc["command"];
-  runCommand(command.c_str(), doc);
+  if (doc.containsKey("command")) {
+    String command = doc["command"];
+    runCommand(command.c_str(), doc);
+  } else {
+    updateActuators(doc);
+  }
 }
 
 
@@ -683,6 +687,10 @@ void runCommand(const char *command, DynamicJsonDocument &doc) {
 }
 
 
+void updateActuators(DynamicJsonDocument &doc) {
+}
+
+
 void sendStatus() {
   if (config.consoleEnabled) {
     Serial.print("sending status: ");
@@ -818,7 +826,6 @@ void initConfig() {
   }  
 
   // load configuration from EEPROM if available
-  //Config myConfig;
   EEPROM.get(0, config);
   Serial.println("config loaded from flash memory:");
   dumpConfig(&config);        
@@ -832,8 +839,8 @@ void initConfig() {
     config.responseTimeout = RESPONSE_TIMEOUT;
     strncpy(config.ownerId, OWNER_ID, 64);
     strncpy(config.hubId, HUB_ID, 64);
-    //strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
-    //strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
+    strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
+    strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
     strncpy(config.thingCrt, certificate_pem_crt, sizeof(config.thingCrt)-1);
     strncpy(config.thingPrivateKey, private_pem_key, sizeof(config.thingPrivateKey)-1);
   } else if (config.version == 0) {
@@ -844,8 +851,8 @@ void initConfig() {
     config.responseTimeout = RESPONSE_TIMEOUT;
     strncpy(config.ownerId, OWNER_ID, 64);
     strncpy(config.hubId, HUB_ID, 64);
-    //strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
-    //strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
+    strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
+    strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
     strncpy(config.thingCrt, certificate_pem_crt, sizeof(config.thingCrt)-1);
     strncpy(config.thingPrivateKey, private_pem_key, sizeof(config.thingPrivateKey)-1);
   } else {
