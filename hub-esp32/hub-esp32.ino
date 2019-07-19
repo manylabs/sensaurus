@@ -3,7 +3,6 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include "AWS_IOT.h"
-//#include "GeneralUtils.h"
 #include "WiFi.h"
 #include "NTPClient.h"
 #include "WiFiUdp.h"
@@ -35,7 +34,6 @@
 #define FIRMWARE_VERSION 2  
 #define MAX_DEVICE_COUNT 6
 #define CONSOLE_BAUD 9600
-//#define CONSOLE_BAUD 115200
 #define DEV_BAUD 38400
 
 // Note: for BLE to build, maximum_size specified in boards.txt needs to be adjusted from 1310720 to:
@@ -54,14 +52,11 @@
 #define ENABLE_AWS_IOT
 #define ENABLE_OTA
 
-// use boot button for configuration (GPIO0 T1) instead of GPIO4 (T0) if testing with vanilla standalone esp32
-//#define USE_BUTTON_BOOT
-
+// used for ESP32 logging
 static const char* TAG = "sensaurus";
 
 // max number of time WIFI connection is retried
 const int MAX_WIFI_RETRIES = 3;
-// ------------
 
 // BLE mode indicator if 0, we are in wifi/iot-aws mode
 // noinit attribute preserves the value during a software reset, thus allowing switching
@@ -74,19 +69,8 @@ static int swReboot = 0;
 // indicates if settings have been modified and need to be save to EEPROM at "bleExit"
 static bool dirty = false;
 
-//./espressif/esp32/variants/node32s/pins_arduino.h 
-//static const uint8_t T0 = 4;
-//static const uint8_t T1 = 0;
-//static const uint8_t T2 = 2;
 
-#ifndef USE_BUTTON_BOOT
-//#define BUTTON_PIN 4
-#define BUTTON_PIN T0
-#else
-#define BUTTON_PIN T1
-#endif
-
-
+#define BUTTON_PIN 4
 #define STATUS_LED_PIN 5      
 #define SERIAL_PIN_1 23
 #define SERIAL_PIN_2 25
@@ -166,9 +150,7 @@ void setupOTA() {
 
   ArduinoOTA.begin();
 
-  Serial.print("OTA ready. IP address:");
-  Serial.printf("%s", WiFi.localIP());
-  
+  Serial.print("OTA ready.");
 }
 #endif // ENABLE_OTA
 
@@ -204,12 +186,8 @@ void dumpConfig(const Config* c) {
         c->thingCrt,
         c->thingPrivateKey
         );  
-  }  
-
-
-      
+  }   
 }
-//#define EEPROM_SIZE 3000
 #define EEPROM_SIZE sizeof(Config)
 
 // serial connections to each device
@@ -265,6 +243,7 @@ char actuatorsTopicName[100];
 
 // run once on startup
 void setup() {
+
   // uncomment this line to get more information from components during debugging
   esp_log_level_set("*", ESP_LOG_WARN);
   //esp_log_level_set("*", ESP_LOG_VERBOSE);
@@ -372,14 +351,14 @@ void setup() {
   }
 #endif // ENABLE_BLE
 
-  // get network time
   if (status == WL_CONNECTED) {
+
+    // get network time
     timeClient.begin();
     timeClient.setTimeOffset(0);  // we want UTC
     updateTime();
 
     setupOTA();
-
   }
 
   if (status == WL_CONNECTED) {
@@ -402,12 +381,14 @@ void loop() {
 
   // yield to other tasks to allow AWS messages to be received
   taskYIELD();
+  
   if (swReboot) {
     Serial.println("Rebooting on request...");
     // wait for BLE processing to settle
     delay(500);
     esp_restart();    
   }
+
   // do polling
   if (pollInterval) {
     unsigned long time = millis();
@@ -444,13 +425,6 @@ void loop() {
       }
     }
   }
-
-  //T0: GPIO 4
-  //T1: GPIO 0
-  //T2: GPIO 2
-  //int touch = touchRead(T0);
-  //int buttonRead = digitalRead(T1);
-  //Serial.printf("buttonRead=%d\n", buttonRead);
   
   // check for BLE config button (button will be LOW when pressed)
   if ((digitalRead(BUTTON_PIN) == LOW) && configMode == false) {
@@ -698,13 +672,7 @@ void sendStatus() {
   DynamicJsonDocument doc(256);
   doc["wifi_network"] = config.wifiNetwork;
   doc["version"] = config.version;
-  // useful for tracing updated firmware where version has not changed, such as when testing OTA
-  doc["built"] = __TIMESTAMP__;
-  // useful for testing OTA
-  char localIp[80];
-  strncpy(localIp, WiFi.localIP().toString().c_str(), sizeof(localIp)-1);
-  doc["localIP"] = localIp;
-  // doc["wifi_password"] = config.wifiPassword;  // leave out wifi password for now
+  doc["built"] = __TIMESTAMP__;  // useful for tracing updated firmware where version has not changed, such as when testing OTA
   doc["host"] = HOST_ADDRESS;
   String topicName = String(config.ownerId) + "/hub/" + config.hubId + "/status";
   String message;
@@ -830,21 +798,12 @@ void initConfig() {
   Serial.println("config loaded from flash memory:");
   dumpConfig(&config);        
 
-  if (config.version != FIRMWARE_VERSION) {
-    Serial.printf("Firmware version changed from %d to %d. Perform re-configuration of this hub!\n",
-      config.version, FIRMWARE_VERSION);
-    config.version = FIRMWARE_VERSION;
-    config.consoleEnabled = ENABLE_CONSOLE;
-    config.wifiEnabled = ENABLE_WIFI;
-    config.responseTimeout = RESPONSE_TIMEOUT;
-    strncpy(config.ownerId, OWNER_ID, 64);
-    strncpy(config.hubId, HUB_ID, 64);
-    strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
-    strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
-    strncpy(config.thingCrt, certificate_pem_crt, sizeof(config.thingCrt)-1);
-    strncpy(config.thingPrivateKey, private_pem_key, sizeof(config.thingPrivateKey)-1);
-  } else if (config.version == 0) {
-    Serial.println("Firmware version loaded from EEPROM is 0. Perform configuration of this hub!");
+  if (config.version != FIRMWARE_VERSION || config.version == 0) {
+    if (config.version) {
+      Serial.printf("Firmware version changed from %d to %d. Perform re-configuration of this hub!\n", config.version, FIRMWARE_VERSION);
+    } else {
+      Serial.println("Firmware version loaded from EEPROM is 0. Perform configuration of this hub!");
+    }
     config.version = FIRMWARE_VERSION;
     config.consoleEnabled = ENABLE_CONSOLE;
     config.wifiEnabled = ENABLE_WIFI;
@@ -858,8 +817,6 @@ void initConfig() {
   } else {
     // loaded config seems OK.  
     Serial.printf("Loaded config - firmware version=%d.\n", config.version);
-    //strncpy(config.thingCrt, certificate_pem_crt, sizeof(config.thingCrt)-1);
-    //strncpy(config.thingPrivateKey, private_pem_key, sizeof(config.thingPrivateKey)-1);
   }
 }
 
@@ -916,8 +873,7 @@ class WifiNetworkCallbacks : public BLECharacteristicCallbacks {
       strncpy(config.wifiNetwork, value.c_str(), sizeof(config.wifiNetwork));
     }    
     //Serial.println(config.wifiNetwork);
-    ESP_LOGI(TAG, "%s", config.wifiNetwork);    
-      
+    ESP_LOGI(TAG, "%s", config.wifiNetwork);          
   }
 };
 
@@ -943,7 +899,7 @@ class OwnerIdCallbacks : public BLECharacteristicCallbacks {
       strncpy(config.ownerId, value.c_str(), sizeof(config.ownerId));
     }
     //Serial.println(config.ownerId);
-    ESP_LOGI(TAG,  "%s", config.ownerId);      
+    ESP_LOGI(TAG,  "%s", config.ownerId);
   }
 };
 
@@ -994,9 +950,7 @@ class HubCertCallbacks : public BLECharacteristicCallbacks {
     if (value == "clear") {
       config.thingCrt[0] = 0;
     } else {
-        // TODO: use strncpy to copy at least partial value contents if total length would
-        //   excceed capacity 
-      if (strlen(config.thingCrt) + strlen(value.c_str()) < sizeof(config.thingCrt) - 1) {
+      if (strlen(config.thingCrt) + strlen(value.c_str()) < sizeof(config.thingCrt) - 1) {  // don't need to do partial copy if too long; partial cert doesn't have any use
         strcat(config.thingCrt, value.c_str());
       }
     }
@@ -1015,7 +969,7 @@ class HubKeyCallbacks : public BLECharacteristicCallbacks {
     if (value == "clear") {
       config.thingPrivateKey[0] = 0;
     } else {
-      if (strlen(config.thingPrivateKey) + strlen(value.c_str()) < sizeof(config.thingPrivateKey) - 1) {
+      if (strlen(config.thingPrivateKey) + strlen(value.c_str()) < sizeof(config.thingPrivateKey) - 1) {  // don't need to do partial copy if too long; partial key doesn't have any use
         strcat(config.thingPrivateKey, value.c_str());
       }
     }
@@ -1069,3 +1023,4 @@ void startBLE() {
 
 
 #endif  // ENABLE_BLE
+
