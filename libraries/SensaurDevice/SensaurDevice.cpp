@@ -37,14 +37,17 @@ void Component::setInfo(const char *info) {
 	}
 	if (modelStart) {
 		int typeLen = modelStart - typeStart - 1;
-		if (typeLen > 20) typeLen = 20;
+		if (typeLen > 20 - 1) typeLen = 20 - 1;
 		int modelLen = unitsStart - modelStart - 1;
-		if (modelLen > 20) modelLen = 20;
-		strncpy(m_type, info + typeStart, typeLen);
-		strncpy(m_model, info + modelStart, modelLen);
+		if (modelLen > 20 - 1) modelLen = 20 - 1;
+		strncpy(m_type, info + typeStart, typeLen);  // doesn't null-terminate m_type
+		strncpy(m_model, info + modelStart, modelLen);  // doesn't null-terminate m_model
 		strncpy(m_units, info + unitsStart, 20);
+		m_type[typeLen] = 0;  // null-terminate m_type
+		m_model[modelLen] = 0;  // null-terminate m_model
 	}
-	strncpy(m_idSuffix, m_type, 6);  // use first 5 characters of type
+	strncpy(m_idSuffix, m_type, 5);  // use first 5 characters of type
+	m_idSuffix[5] = 0;
 }
 
 
