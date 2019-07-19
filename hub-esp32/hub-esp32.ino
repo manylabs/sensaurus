@@ -35,6 +35,7 @@
 #define MAX_DEVICE_COUNT 6
 #define CONSOLE_BAUD 9600
 #define DEV_BAUD 38400
+#define SERIAL_BUFFER_SIZE 64
 
 // Note: for BLE to build, maximum_size specified in boards.txt needs to be adjusted from 1310720 to:
 // node32smax.upload.maximum_size=1900544
@@ -185,19 +186,19 @@ void dumpConfig(const Config* c) {
         c->wifiPassword,
         c->thingCrt,
         c->thingPrivateKey
-        );  
-  }   
+        );
+  }
 }
 #define EEPROM_SIZE sizeof(Config)
 
 // serial connections to each device
 HubSerial devSerial[] = {
-  HubSerial(SERIAL_PIN_1),
-  HubSerial(SERIAL_PIN_2),
-  HubSerial(SERIAL_PIN_3),
-  HubSerial(SERIAL_PIN_4),
-  HubSerial(SERIAL_PIN_5),
-  HubSerial(SERIAL_PIN_6),
+  HubSerial(SERIAL_PIN_1, SERIAL_BUFFER_SIZE),
+  HubSerial(SERIAL_PIN_2, SERIAL_BUFFER_SIZE),
+  HubSerial(SERIAL_PIN_3, SERIAL_BUFFER_SIZE),
+  HubSerial(SERIAL_PIN_4, SERIAL_BUFFER_SIZE),
+  HubSerial(SERIAL_PIN_5, SERIAL_BUFFER_SIZE),
+  HubSerial(SERIAL_PIN_6, SERIAL_BUFFER_SIZE),
 };
 
 
@@ -358,7 +359,9 @@ void setup() {
     timeClient.setTimeOffset(0);  // we want UTC
     updateTime();
 
-    setupOTA();
+    #ifdef ENABLE_OTA
+      setupOTA();
+    #endif
   }
 
   if (status == WL_CONNECTED) {
@@ -372,7 +375,9 @@ void setup() {
 
 // run repeatedly
 void loop() {
-  ArduinoOTA.handle();  
+  #ifdef ENABLE_OTA
+    ArduinoOTA.handle();
+  #endif
   
   // process any incoming data from the hub computer
   while (Serial.available()) {
@@ -704,7 +709,7 @@ void sendDeviceInfo() {
       json += '"';
       json += dev.id();
       json += "\":";
-      json += String("{\"version\": ") + dev.version() + ", \"components\": [";
+      json += String("{\"version\":") + dev.version() + ", \"plug\":" + (i + 1) + ", \"components\": [";
       for (int j = 0; j < dev.componentCount(); j++) {
         if (j)
           json += ',';
