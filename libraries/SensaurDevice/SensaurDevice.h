@@ -13,19 +13,23 @@ public:
 
 	// the current value (for sensors)
 	// we represent values as strings so as not to worry about gaining/losing decimal places
-	const char *value() const { return m_value; }
+	inline const char *value() const { return m_value; }
 	void setValue(const char *value);
 
 	// info received from the device
 	// e.g.: "i,CO2,K-30,PPM"
 	void setInfo(const char *info);
-	char dir() const { return m_dir; };
+	inline char dir() const { return m_dir; };
 
 	// retrieve the component info as a JSON string
 	String infoJson();
 
 	// retrieve the type-based ID suffix for this component
-	const char *idSuffix() const { return m_idSuffix; }
+	inline const char *idSuffix() const { return m_idSuffix; }
+
+	// last value sent to actuator; stored here so we can update one actuator on a hub without changing the others
+	inline void setActuatorValue(float v) { m_actuatorValue = v; }
+	inline float actuatorValue() { return m_actuatorValue; }
 
 private:
 
@@ -38,6 +42,9 @@ private:
 	char m_model[20];
 	char m_units[20];
 	char m_idSuffix[6];
+
+	// last value sent to actuator; stored here so we can update one actuator on a hub without changing the others
+	float m_actuatorValue;
 };
 
 
