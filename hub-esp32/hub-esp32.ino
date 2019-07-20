@@ -410,7 +410,7 @@ void loop() {
     time = millis();
     for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
       Device &d = devices[i];
-      if (d.connected() && time - d.lastMessageTime() > pollInterval * 2) {
+      if (d.connected() && time - d.lastMessageTime() > pollInterval * 3) {
         d.setConnected(false);
         digitalWrite(ledPin[i], LOW);
         sendDeviceInfo();
@@ -738,9 +738,6 @@ void sendStatus() {
 
 
 void sendDeviceInfo() {
-  if (config.consoleEnabled) {
-    Serial.print("sending device info: ");
-  }
   String json = "{";
   bool first = true;
   int deviceCount = 0;
@@ -773,9 +770,11 @@ void sendDeviceInfo() {
   json += "}";
   String topicName = String(config.ownerId) + "/hub/" + config.hubId + "/devices";
   if (config.wifiEnabled) {
-    Serial.println(json);
+    if (config.consoleEnabled) {
+      Serial.printf("sending device info; size: %d\n", json.length());
+    }
     if (awsConn.publish(topicName.c_str(), json.c_str())) {  // send list of device info dictionaries
-      Serial.println("error publishing");    
+      Serial.printf("error publishing; message size: %d\n", json.length());
     }
   }
   if (config.consoleEnabled) {
