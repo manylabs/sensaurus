@@ -4,6 +4,9 @@
 
 
 #define MAX_COMPONENT_COUNT 6
+#define MAX_TYPE_LEN 20
+#define MAX_MODEL_LEN 20
+#define MAX_UNITS_LEN 20
 
 
 class Component {
@@ -38,9 +41,9 @@ private:
 
 	// info from the device
 	char m_dir;
-	char m_type[20];
-	char m_model[20];
-	char m_units[20];
+	char m_type[MAX_TYPE_LEN];
+	char m_model[MAX_MODEL_LEN];
+	char m_units[MAX_UNITS_LEN];
 	char m_idSuffix[6];
 
 	// last value sent to actuator; stored here so we can update one actuator on a hub without changing the others

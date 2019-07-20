@@ -21,9 +21,12 @@ void Component::setValue(const char *value) {
 
 void Component::setInfo(const char *info) {
 	m_dir = info[0];
+
+	// find positions of component info elements
+	// note: type, model, and units are all optional, but they must appear in this order
 	int part = 0;
 	int pos = 0;
-	int typeStart = 0, unitsStart = 0, modelStart = 0;
+	int typeStart = 0, modelStart = 0, unitsStart = 0;
 	while (info[pos]) {
 		if (info[pos] == ',') {
 			part++;
@@ -35,18 +38,34 @@ void Component::setInfo(const char *info) {
 		}
 		pos++;
 	}
-	if (modelStart) {
-		int typeLen = modelStart - typeStart - 1;
-		if (typeLen > 20 - 1) typeLen = 20 - 1;
-		int modelLen = unitsStart - modelStart - 1;
-		if (modelLen > 20 - 1) modelLen = 20 - 1;
-		strncpy(m_type, info + typeStart, typeLen);  // doesn't null-terminate m_type
-		strncpy(m_model, info + modelStart, modelLen);  // doesn't null-terminate m_model
-		strncpy(m_units, info + unitsStart, 20);
-		m_type[typeLen] = 0;  // null-terminate m_type
-		m_model[modelLen] = 0;  // null-terminate m_model
+
+	// compute lengths
+	int typeLen = 0, modelLen = 0, unitsLen = 0;
+	if (typeStart) {
+		typeLen = modelStart ? (modelStart - typeStart - 1) : pos - typeStart;
 	}
-	strncpy(m_idSuffix, m_type, 5);  // use first 5 characters of type
+	if (modelStart) {
+		modelLen = unitsStart ? (unitsStart - modelStart - 1) : pos - modelStart;
+	}
+	if (unitsStart) {
+		unitsLen = pos - unitsStart;
+	}
+	if (typeLen >= MAX_TYPE_LEN) typeLen = MAX_TYPE_LEN - 1;  // leave room for null-terminator
+	if (modelLen >= MAX_MODEL_LEN) modelLen = MAX_MODEL_LEN - 1;
+	if (unitsLen >= MAX_UNITS_LEN) unitsLen = MAX_UNITS_LEN - 1;
+
+	// copy component info (doesn't null-terminate in this case)
+	strncpy(m_type, info + typeStart, typeLen);
+	strncpy(m_model, info + modelStart, modelLen);
+	strncpy(m_units, info + unitsStart, unitsLen);
+
+	// null terminate component info
+	m_type[typeLen] = 0;
+	m_model[modelLen] = 0;
+	m_units[unitsLen] = 0;
+
+	// create a component ID suffix from the first 5 characters of type (will be combined with device ID)
+	strncpy(m_idSuffix, m_type, 5);
 	m_idSuffix[5] = 0;
 }
 
