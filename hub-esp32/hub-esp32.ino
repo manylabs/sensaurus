@@ -35,7 +35,7 @@
 #define MAX_DEVICE_COUNT 6
 #define CONSOLE_BAUD 9600
 #define DEV_BAUD 38400
-#define SERIAL_BUFFER_SIZE 64
+#define SERIAL_BUFFER_SIZE 120
 
 // Note: for BLE to build, maximum_size specified in boards.txt needs to be adjusted from 1310720 to:
 // node32smax.upload.maximum_size=1900544
@@ -667,6 +667,50 @@ void runCommand(const char *command, DynamicJsonDocument &doc) {
 
 
 void updateActuators(DynamicJsonDocument &doc) {
+  JsonObject obj = doc.as<JsonObject>();
+
+  // loop over devices; we'll send a message to each one (that has updated actuators)
+  for (int deviceIndex = 0; deviceIndex < MAX_DEVICE_COUNT; deviceIndex++) {
+    Device &d = devices[deviceIndex];
+    bool deviceUpdated = false;  // will be made true if the incoming message specified a new value for any component of this device
+
+    // look for any new actuator values for this device
+    for (JsonPair p : obj) {
+      String componentId(p.key().c_str());
+      int dashPos = componentId.indexOf('-');
+      String deviceId = componentId.substring(0, dashPos);
+      if (deviceId == d.id()) {  // probably faster to use C string comparison
+        String idSuffix = componentId.substring(dashPos + 1);
+        for (int i = 0; i < d.componentCount(); i++) {
+          Component &c = d.component(i);
+          if (idSuffix == c.idSuffix()) {  // probably faster to use C string comparison rather than create a String object on the fly
+            c.setActuatorValue(p.value());
+            deviceUpdated = true;
+          }
+        }
+      }
+    }
+
+    // if we updated this device, send a message to it
+    // we construct the message containing a value for each output component, in the order specified via the device metadata
+    if (deviceUpdated) {
+      Stream &s = devStream[deviceIndex];
+      s.print("s:");
+      bool first = true;
+      for (int i = 0; i < d.componentCount(); i++) {
+        Component &c = d.component(i);
+        if (c.dir() == 'o') {
+          if (first == false) {
+            s.print(',');
+          }
+          s.print(c.actuatorValue());
+          first = false;
+        }
+      }
+      s.println();
+      waitForResponse(deviceIndex);
+    }
+  }
 }
 
 
