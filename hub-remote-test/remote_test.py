@@ -3,6 +3,7 @@ import ssl
 import time
 import json
 import hjson
+import random
 
 
 class Tester(object):
@@ -13,6 +14,7 @@ class Tester(object):
         self.config = config
         self.config_sent = False
         self.log_file = open('sensor-data.csv', 'a')
+        self.test_component_ids = []
 
     # connect to the MQTT service (broker)
     def connect(self):
@@ -57,6 +59,16 @@ class Tester(object):
             print('devices:')
             print(message)
 
+            # check for test components
+            self.test_component_ids = []
+            for device_id, device_info in message.items():
+                for comp_info in device_info['components']:
+                    comp_type = comp_info['type']
+                    if comp_type.startswith('out') and comp_type.endswith('test'):
+                        comp_id = device_id + '-' + comp_info['type'][:5]
+                        print('found test component: %s' % comp_id)
+                        self.test_component_ids.append(comp_id)
+
     # send a command message to the hub's command topic; args can be a dictionary of additional command arguments
     def send_command(self, command, args=None):
         message = args or {}
@@ -64,6 +76,12 @@ class Tester(object):
         topic_name = '%s/hub/%s/command' % (self.config['owner_id'], self.config['hub_id'])
         print('sending command %s to %s' % (command, topic_name))
         self.mqttc.publish(topic_name, json.dumps(message))
+
+    # send a command message to the hub's command topic; args can be a dictionary of additional command arguments
+    def set_actuators(self, actuator_values):
+        topic_name = '%s/hub/%s/command' % (self.config['owner_id'], self.config['hub_id'])
+        print('sending %d actuator values to %s' % (len(actuator_values), topic_name))
+        self.mqttc.publish(topic_name, json.dumps(actuator_values))
 
     # simulate a polling loop
     def run(self):
@@ -75,6 +93,9 @@ class Tester(object):
                     self.send_command('set_send_interval', {'send_interval': 1.0})
                     self.send_command('req_status')
                     self.send_command('req_devices')
+                if self.test_component_ids:
+                    actuator_values = {comp_id: random.randint(0, 1) for comp_id in self.test_component_ids}
+                    self.set_actuators(actuator_values)
             else:
                 print('waiting for connection...')
 
