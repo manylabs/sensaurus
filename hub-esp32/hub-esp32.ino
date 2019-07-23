@@ -1,8 +1,21 @@
+// uncomment to allow BLE to be operational
+#define ENABLE_BLE
+// uncomment to allow aws iot connections
+//#define ENABLE_AWS_IOT
+// only one of ENABLE_AWS_IOT and ENABLE_MQTT must be defined
+#define ENABLE_MQTT
+
+
 #include <EEPROM.h>
 #include <ArduinoOTA.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include "AWS_IOT.h"
+#ifdef ENABLE_MQTT
+// set this in PubSubClienht.h: #define MQTT_KEEPALIVE 60
+#include "PubSubClient.h"
+#endif
+#include "jled.h"
 //#include "GeneralUtils.h"
 #include "WiFi.h"
 #include "NTPClient.h"
@@ -48,10 +61,8 @@
 // app1,     app,  ota_1,   0x1E0000,0x1D0000,
 // spiffs,   data, spiffs,  0x3B0000,0x50000,
 
-// uncomment to allow BLE to be operational
-#define ENABLE_BLE
-// uncomment to allow aws iot connections
-#define ENABLE_AWS_IOT
+
+// OTA should normally be defined
 #define ENABLE_OTA
 
 // use boot button for configuration (GPIO0 T1) instead of GPIO4 (T0) if testing with vanilla standalone esp32
@@ -71,6 +82,7 @@ static RTC_NOINIT_ATTR  int bleMode = 0;
 // 1 = bleExit
 // 2 = bleStart
 static int swReboot = 0;
+static bool pubsubEnabled = false;
 // indicates if settings have been modified and need to be save to EEPROM at "bleExit"
 static bool dirty = false;
 
@@ -130,7 +142,159 @@ struct Config {
 // set to true to allow ble init at startup. eventually, this should be moved to Config
 // as of 7/3/19: ENABLE_AWS_IOT has to be disabled when bleEnable is true.
 bool bleEnabled = false;
+char commandTopicName[100];  // apparently the topic name string needs to stay in memory
+char actuatorsTopicName[100];
 
+
+unsigned long bootTimeEpoch = 0;
+String bootTime;
+
+auto blueLed = JLed(2);
+
+// *******************
+// Debug functions ***
+// *******************
+void displayFreeHeap() {
+   Serial.printf("\nHeap size: %d\n", ESP.getHeapSize());
+   Serial.printf("Free Heap: %d\n", heap_caps_get_free_size(MALLOC_CAP_8BIT));
+   Serial.printf("Min Free Heap: %d\n", heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+   Serial.printf("Max Alloc Heap: %d\n", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+}
+
+
+// *******************
+// MQTT functions  ***
+// *******************
+#ifdef ENABLE_MQTT
+const int MAX_MQTT_CONNECT_RETRIES = 3;
+static const int MQTT_MAX_BUFFER_SIZE = MQTT_MAX_PACKET_SIZE-10;
+
+#define MQTT_USER "gamgaxzt"
+#define MQTT_PASSWORD "xxxx"
+#define mqtt_port 13125
+const char* mqtt_server = "postman.cloudmqtt.com";
+/*
+#define MQTT_USER ""
+#define MQTT_PASSWORD ""
+#define mqtt_port 1883
+// mac
+const char* mqtt_server = "192.168.86.137";
+// rpi - wifi
+//const char* mqtt_server = "192.168.86.144";
+//const char* mqtt_server = "192.168.1.67";
+*/
+
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
+// last time mqtt reconnect was attempted, in millis
+static long lastMqttConnectionAttempt = 0;
+// interval at which mqtt reconnect can be attempted, in millis
+static const int mqttReconnectInterval = 60000;
+/**
+ * Connect or reconnect to MQTT server and re-subscribe.
+ * Returns: true if success, false otherwise.
+ */
+bool mqttReconnect() {
+  // Loop until we're reconnected
+  int retries = 0;  
+  while (!mqttClient.connected()) {
+    if (WiFi.status() != WL_CONNECTED) {
+        // see WiFiType.h
+        //     WL_DISCONNECTED     = 6
+        ESP_LOGE(TAG, "mqttReconnect: Wifi.status() is not WL_CONNECTED (0), but %d. Will not attempt MQTT connection\n", WiFi.status());
+        return false;
+    }    
+    ESP_LOGI(TAG, "Attempting MQTT connection...");
+    // Create a random client ID
+    String clientId = "hub-";
+    //clientId += String(random(0xffff), HEX);
+    clientId += String(config.hubId);
+    // Attempt to connect
+    if (mqttClient.connect(clientId.c_str(),MQTT_USER,MQTT_PASSWORD)) {
+      Serial.println("connected");
+      // prep topic names
+      String topicName = String(config.ownerId) + "/hub/" + config.hubId + "/command";
+      strcpy(commandTopicName, topicName.c_str());
+      topicName = String(config.ownerId) + "/hub/" + config.hubId + "/actuators";
+      strcpy(actuatorsTopicName, topicName.c_str());
+      bool rc;
+      // do subscriptions
+      //rc = mqttClient.subscribe("252/hub/20197/command");
+      //if (!rc) {
+      //  ESP_LOGE(TAG, "mqttReconnect: mqttClient.subscribe failed for %s: rc=%d, state=%d\n", "252/hub/20197/command", rc, mqttClient.state());
+      //}      
+      
+      rc = mqttClient.subscribe(commandTopicName);
+      if (!rc) {
+        ESP_LOGE(TAG, "mqttReconnect: mqttClient.subscribe failed for %s: rc=%d, state=%d\n", commandTopicName, rc, mqttClient.state());
+        return rc;
+      }            
+      rc = mqttClient.subscribe(actuatorsTopicName);            
+      if (!rc) {
+        ESP_LOGE(TAG, "mqttReconnect: mqttClient.subscribe failed for %s: rc=%d, state=%d\n", actuatorsTopicName, rc, mqttClient.state());
+      }            
+      return rc;
+    } else {
+      ESP_LOGE(TAG, "mqttReconnect: failed, state=%d. Will try again in 5 seconds", mqttClient.state());
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+    if (retries >= MAX_MQTT_CONNECT_RETRIES) {
+      ESP_LOGE(TAG, "mqttReconnect: connect failed: max retries exceeded");
+      break;
+    }
+    
+  }
+  return false;
+}
+
+static volatile bool wifi_connected = false;
+
+void WiFiEvent(WiFiEvent_t event)
+{
+  switch (event)
+  {
+  case SYSTEM_EVENT_AP_START:
+    Serial.println("SYSTEM_EVENT_AP_START");
+    //can set ap hostname here
+    // WiFi.softAPsetHostname(_node_name.c_str());
+    //enable ap ipv6 here
+    // WiFi.softAPenableIpV6();
+    break;
+
+  case SYSTEM_EVENT_STA_START:
+    Serial.println("SYSTEM_EVENT_STA_START");
+    //set sta hostname here
+    //WiFi.setHostname(_node_name.c_str());
+    break;
+  case SYSTEM_EVENT_STA_CONNECTED:
+    Serial.println("SYSTEM_EVENT_STA_CONNECTED");
+    //enable sta ipv6 here
+    //WiFi.enableIpV6();
+    break;
+  case SYSTEM_EVENT_AP_STA_GOT_IP6:
+    //both interfaces get the same event
+    Serial.print("STA IPv6: ");
+    Serial.println(WiFi.localIPv6());
+    Serial.print("AP IPv6: ");
+    Serial.println(WiFi.softAPIPv6());
+    break;
+  case SYSTEM_EVENT_STA_GOT_IP:
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+    wifi_connected = true;
+    break;
+  case SYSTEM_EVENT_STA_DISCONNECTED:
+    wifi_connected = false;
+    Serial.println("STA Disconnected");
+    delay(1000);
+    //WiFi.begin(ssid, password);
+    break;
+  }
+}
+
+#endif // ENABLE_MQTT
 
 #ifdef ENABLE_OTA
 // setup OTA
@@ -166,8 +330,9 @@ void setupOTA() {
 
   ArduinoOTA.begin();
 
-  Serial.print("OTA ready. IP address:");
-  Serial.printf("%s", WiFi.localIP());
+  char localIp[80];
+  strncpy(localIp, WiFi.localIP().toString().c_str(), sizeof(localIp)-1);  
+  Serial.printf("OTA ready. IP address: %s\n", localIp);
   
 }
 #endif // ENABLE_OTA
@@ -259,15 +424,13 @@ WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP);
 unsigned long lastEpochSeconds = 0;  // seconds since epoch start (from NTP)
 unsigned long lastTimeUpdate = 0;  // msec since boot
-char commandTopicName[100];  // apparently the topic name string needs to stay in memory
-char actuatorsTopicName[100];
 
 
 // run once on startup
 void setup() {
   // uncomment this line to get more information from components during debugging
-  esp_log_level_set("*", ESP_LOG_WARN);
-  //esp_log_level_set("*", ESP_LOG_VERBOSE);
+  //esp_log_level_set("*", ESP_LOG_WARN);
+  esp_log_level_set("*", ESP_LOG_VERBOSE);
   esp_log_level_set(TAG, ESP_LOG_VERBOSE);
   
   // init. bleMode persistent variable if needed 
@@ -303,6 +466,7 @@ void setup() {
   if (config.wifiEnabled) {
     int retries = 0;
     while (status != WL_CONNECTED) {
+      //WiFi.onEvent(WiFiEvent);      
       status = WiFi.begin(config.wifiNetwork, config.wifiPassword);
       if (status != WL_CONNECTED) {
         delay(2000);
@@ -312,7 +476,17 @@ void setup() {
         }
         retries++;
       } else {
-          Serial.println("connected to wifi");        
+          Serial.println("connected to wifi");   
+          Serial.println("IP address: ");
+          Serial.println(WiFi.localIP());
+          while (WiFi.status() != WL_CONNECTED) {
+            delay(100);
+            Serial.print(".");
+          }
+          
+          Serial.println("after WiFi.status() wait: IP address: ");
+          Serial.println(WiFi.localIP());
+          
       }
     }
   } else {
@@ -352,6 +526,7 @@ void setup() {
       // do subscriptions
       subscribe(commandTopicName);
       subscribe(actuatorsTopicName);
+      pubsubEnabled = true;
     } else {
       Serial.println("failed to connect to AWS");
       //freezeWithError();
@@ -359,11 +534,20 @@ void setup() {
   } else {
       Serial.println("Skipped connecting to AWS IOT");    
   }
+  Serial.printf("setup after awsConn.connect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());  
+#elif defined(ENABLE_MQTT)
+  mqttClient.setServer(mqtt_server, mqtt_port);
+  mqttClient.setCallback(mqttMessageHandler);
+  //mqttClient.setCallback(callback);
+  Serial.printf("setup before mqttReconnect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());    
+  bool rc = mqttReconnect();
+  Serial.printf("setup after mqttReconnect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap()); 
+  pubsubEnabled = true;     
 #endif // ENABLE_AWS_IOT 
   
-  Serial.printf("setup after awsConn.connect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());  
   if (!awsIotConnected) {
-    Serial.println("AWS IOT not connected: switching to BLE mode.");
+  //if (!pubsubEnabled) {
+    Serial.println("AWS IOT/MQTT not connected: switching to BLE mode.");
     bleMode++;
   }
 #ifdef ENABLE_BLE
@@ -377,10 +561,15 @@ void setup() {
     timeClient.begin();
     timeClient.setTimeOffset(0);  // we want UTC
     updateTime();
-
-    setupOTA();
-
+    bootTime = timeClient.getFormattedTime(); 
+    bootTimeEpoch = timeClient.getEpochTime();
   }
+  if (status == WL_CONNECTED) {
+    //delay(100);
+    //setupOTA();
+  }
+  
+  
 
   if (status == WL_CONNECTED) {
     // send current status
@@ -394,7 +583,29 @@ void setup() {
 // run repeatedly
 void loop() {
   ArduinoOTA.handle();  
-  
+#ifdef ENABLE_MQTT
+   mqttClient.loop();
+  if (pubsubEnabled) {
+    if (!mqttClient.connected() || mqttClient.state() != MQTT_CONNECTED) {
+      unsigned long time = millis();
+      if (time - lastMqttConnectionAttempt > mqttReconnectInterval) {
+        // see PubSubClient.h
+        //#define MQTT_CONNECTION_TIMEOUT     -4
+        //#define MQTT_CONNECTION_LOST        -3
+        //#define MQTT_CONNECT_FAILED         -2
+        //#define MQTT_DISCONNECTED           -1
+        //#define MQTT_CONNECTED               0
+
+        ESP_LOGI(TAG, "MQTT client disconnected state=%d: trying reconnect...", mqttClient.state()); 
+        bool rc = mqttReconnect();
+        if (!rc) {
+          ESP_LOGI(TAG, "MQTT reconnect attempt failed. Will try again in %d seconds", mqttReconnectInterval/1000); 
+        }
+        lastMqttConnectionAttempt = millis();
+      }      
+    }
+  }
+#endif
   // process any incoming data from the hub computer
   while (Serial.available()) {
     processByteFromComputer(Serial.read());
@@ -469,6 +680,7 @@ void loop() {
   if (time - lastTimeUpdate > 1000 * 60 * 60) {
     updateTime();
   }
+  blueLed.Update();
 }
 
 
@@ -487,7 +699,7 @@ void doPolling() {
 
 
 void subscribe(const char *topicName) {
-  if (awsConn.subscribe(topicName, messageHandler) == 0) {
+  if (awsConn.subscribe(topicName, awsMessageHandler) == 0) {
     Serial.print("subscribed to topic: ");
     Serial.println(topicName);
   } else {
@@ -499,11 +711,20 @@ void subscribe(const char *topicName) {
 
 
 // handle an incoming command MQTT message
-void messageHandler(char *topicName, int payloadLen, char *payLoad) {
+void awsMessageHandler(char *topicName, int payloadLen, char *payLoad) {
+  handleIncomingMessage(topicName, payloadLen, payLoad);
+}
+
+void mqttMessageHandler(char* topic, byte *payload, unsigned int length) {
+  //Serial.println("-------new message from broker-----");
+  handleIncomingMessage(topic, length, (char*)payload);  
+}
+
+void handleIncomingMessage(char *topicName, int payloadLen, char *payLoad) {
   DynamicJsonDocument doc(256);
   deserializeJson(doc, payLoad);
   String command = doc["command"];
-  runCommand(command.c_str(), doc);
+  runCommand(command.c_str(), doc);  
 }
 
 
@@ -698,19 +919,77 @@ void sendStatus() {
   doc["localIP"] = localIp;
   // doc["wifi_password"] = config.wifiPassword;  // leave out wifi password for now
   doc["host"] = HOST_ADDRESS;
+  doc["uptime"] = millis();
+  String now = timeClient.getFormattedTime(); 
+  //Time.format("%Y-%m-%d %H:%M:%S");
+  doc["bootTime"] = bootTime;
+  doc["bootTimeEpoch"] = bootTimeEpoch;
+  doc["hubTime"] = now;
   String topicName = String(config.ownerId) + "/hub/" + config.hubId + "/status";
   String message;
   serializeJson(doc, message);
-  if (!bleMode && config.wifiEnabled) {
-    if (awsConn.publish(topicName.c_str(), message.c_str())) {
+  if (pubsubEnabled) {
+    if (hubPublish(topicName.c_str(), message.c_str())) {
       Serial.println("error publishing");
     }
-  }
+  }  
   if (config.consoleEnabled) {
     Serial.println("done");
   }
 }
 
+// return 0 if success, >= 1 if failure
+int hubPublish(const char* topic, const char* message) {
+  int ret;
+#ifdef ENABLE_AWS_IOT 
+  ESP_LOGD(TAG, "awsConn.publish: %s: %s", topic, message);
+  ret = awsConn.publish(topic, message);
+#elif defined(ENABLE_MQTT)
+  ESP_LOGD(TAG, "mqttClient.publish: %s: %s", topic, message);
+  if (!mqttClient.connected()) {
+    ESP_LOGE(TAG, "mqttClient.publish: error: not connected");    
+    return 1;
+  }
+  //Serial.printf("mqttClient.publish: %s: %s\n", topic, message);
+  bool rc;
+  if (strlen(message) > MQTT_MAX_BUFFER_SIZE) {
+    rc = mqttClient.beginPublish(topic, strlen(message), false);  
+    if (!rc)  {
+      ESP_LOGE(TAG, "mqttClient.beginPublish failed: rc=%d, state=%d\n", rc, mqttClient.state());
+    } else {
+      rc = mqttClient.write((const byte*)message, MQTT_MAX_BUFFER_SIZE);
+      if (!rc) {
+        ESP_LOGE(TAG, "mqttClient.write failed: rc=%d, state=%d\n", rc, mqttClient.state());    
+        goto do_return;
+      }
+      //rc = mqttClient.print(&message[MQTT_MAX_BUFFER_SIZE-1]);
+      // also send terminating null.
+      rc = mqttClient.write((const byte*) &message[MQTT_MAX_BUFFER_SIZE], strlen(message)-MQTT_MAX_BUFFER_SIZE+1);
+      if (!rc) {
+        ESP_LOGE(TAG, "mqttClient.print failed: rc=%d, state=%d\n", rc, mqttClient.state());    
+        goto do_return;
+      }
+      rc = mqttClient.endPublish();
+      if (!rc) {
+        ESP_LOGE(TAG, "mqttClient.endPublish failed: rc=%d, state=%d\n", rc, mqttClient.state());    
+      }      
+    }
+    
+  } else {
+    rc = mqttClient.publish(topic, message);    
+  }
+  do_return:
+  if (!rc) {
+    ESP_LOGE(TAG, "mqttClient publishing failed: rc=%d, state=%d\n", rc, mqttClient.state());
+  }
+  ret = rc ? 0:1;
+#endif ENABLE_AWS_IOT    
+  if (!ret) {
+    // blink if publish success
+    blueLed.Blink(10, 10);
+  }
+  return ret;
+}
 
 void sendDeviceInfo() {
   if (config.consoleEnabled) {
@@ -738,7 +1017,7 @@ void sendDeviceInfo() {
       first = false;
       String topicName = String(config.ownerId) + "/device/" + dev.id();
       if (config.wifiEnabled) {
-        if (awsConn.publish(topicName.c_str(), config.hubId)) {  // send hub ID for this device
+        if (hubPublish(topicName.c_str(), config.hubId)) {  // send hub ID for this device
           Serial.println("error publishing");
         }
       }
@@ -749,7 +1028,7 @@ void sendDeviceInfo() {
   String topicName = String(config.ownerId) + "/hub/" + config.hubId + "/devices";
   if (config.wifiEnabled) {
     Serial.println(json);
-    if (awsConn.publish(topicName.c_str(), json.c_str())) {  // send list of device info dictionaries
+    if (hubPublish(topicName.c_str(), json.c_str())) {  // send list of device info dictionaries
       Serial.println("error publishing");    
     }
   }
@@ -785,7 +1064,7 @@ void sendSensorValues(unsigned long time) {
   String message;
   serializeJson(doc, message);
   if (config.wifiEnabled) {
-    if (awsConn.publish(topicName.c_str(), message.c_str())) {
+    if (hubPublish(topicName.c_str(), message.c_str())) {
       Serial.println("error publishing");
     }
   }
