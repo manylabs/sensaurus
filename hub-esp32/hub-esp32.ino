@@ -16,7 +16,6 @@
 #include "PubSubClient.h"
 #endif
 #include "jled.h"
-//#include "GeneralUtils.h"
 #include "WiFi.h"
 #include "NTPClient.h"
 #include "WiFiUdp.h"
@@ -47,9 +46,9 @@
 //  if version is incremented
 #define FIRMWARE_VERSION 2  
 #define MAX_DEVICE_COUNT 6
-//#define CONSOLE_BAUD 9600
-#define CONSOLE_BAUD 115200
+#define CONSOLE_BAUD 9600
 #define DEV_BAUD 38400
+#define SERIAL_BUFFER_SIZE 120
 
 // Note: for BLE to build, maximum_size specified in boards.txt needs to be adjusted from 1310720 to:
 // node32smax.upload.maximum_size=1900544
@@ -61,18 +60,17 @@
 // app1,     app,  ota_1,   0x1E0000,0x1D0000,
 // spiffs,   data, spiffs,  0x3B0000,0x50000,
 
-
-// OTA should normally be defined
+// uncomment to allow BLE to be operational
+#define ENABLE_BLE
+// uncomment to allow aws iot connections
+//#define ENABLE_AWS_IOT
 #define ENABLE_OTA
 
-// use boot button for configuration (GPIO0 T1) instead of GPIO4 (T0) if testing with vanilla standalone esp32
-#define USE_BUTTON_BOOT
-
+// used for ESP32 logging
 static const char* TAG = "sensaurus";
 
 // max number of time WIFI connection is retried
 const int MAX_WIFI_RETRIES = 3;
-// ------------
 
 // BLE mode indicator if 0, we are in wifi/iot-aws mode
 // noinit attribute preserves the value during a software reset, thus allowing switching
@@ -86,19 +84,8 @@ static bool pubsubEnabled = false;
 // indicates if settings have been modified and need to be save to EEPROM at "bleExit"
 static bool dirty = false;
 
-//./espressif/esp32/variants/node32s/pins_arduino.h 
-//static const uint8_t T0 = 4;
-//static const uint8_t T1 = 0;
-//static const uint8_t T2 = 2;
 
-#ifndef USE_BUTTON_BOOT
-//#define BUTTON_PIN 4
-#define BUTTON_PIN T0
-#else
-#define BUTTON_PIN T1
-#endif
-
-
+#define BUTTON_PIN 4
 #define STATUS_LED_PIN 5      
 #define SERIAL_PIN_1 23
 #define SERIAL_PIN_2 25
@@ -170,7 +157,7 @@ const int MAX_MQTT_CONNECT_RETRIES = 3;
 static const int MQTT_MAX_BUFFER_SIZE = MQTT_MAX_PACKET_SIZE-10;
 
 #define MQTT_USER "gamgaxzt"
-#define MQTT_PASSWORD "xxxx"
+#define MQTT_PASSWORD "xxx"
 #define mqtt_port 13125
 const char* mqtt_server = "postman.cloudmqtt.com";
 /*
@@ -330,9 +317,11 @@ void setupOTA() {
 
   ArduinoOTA.begin();
 
+  // peterm:
   char localIp[80];
   strncpy(localIp, WiFi.localIP().toString().c_str(), sizeof(localIp)-1);  
   Serial.printf("OTA ready. IP address: %s\n", localIp);
+  // peters: Serial.print("OTA ready.");
   
 }
 #endif // ENABLE_OTA
@@ -368,23 +357,19 @@ void dumpConfig(const Config* c) {
         c->wifiPassword,
         c->thingCrt,
         c->thingPrivateKey
-        );  
-  }  
-
-
-      
+        );
+  }
 }
-//#define EEPROM_SIZE 3000
 #define EEPROM_SIZE sizeof(Config)
 
 // serial connections to each device
 HubSerial devSerial[] = {
-  HubSerial(SERIAL_PIN_1),
-  HubSerial(SERIAL_PIN_2),
-  HubSerial(SERIAL_PIN_3),
-  HubSerial(SERIAL_PIN_4),
-  HubSerial(SERIAL_PIN_5),
-  HubSerial(SERIAL_PIN_6),
+  HubSerial(SERIAL_PIN_1, SERIAL_BUFFER_SIZE),
+  HubSerial(SERIAL_PIN_2, SERIAL_BUFFER_SIZE),
+  HubSerial(SERIAL_PIN_3, SERIAL_BUFFER_SIZE),
+  HubSerial(SERIAL_PIN_4, SERIAL_BUFFER_SIZE),
+  HubSerial(SERIAL_PIN_5, SERIAL_BUFFER_SIZE),
+  HubSerial(SERIAL_PIN_6, SERIAL_BUFFER_SIZE),
 };
 
 
@@ -428,6 +413,7 @@ unsigned long lastTimeUpdate = 0;  // msec since boot
 
 // run once on startup
 void setup() {
+
   // uncomment this line to get more information from components during debugging
   //esp_log_level_set("*", ESP_LOG_WARN);
   esp_log_level_set("*", ESP_LOG_VERBOSE);
@@ -556,17 +542,24 @@ void setup() {
   }
 #endif // ENABLE_BLE
 
-  // get network time
   if (status == WL_CONNECTED) {
+
+    // get network time
     timeClient.begin();
     timeClient.setTimeOffset(0);  // we want UTC
     updateTime();
     bootTime = timeClient.getFormattedTime(); 
     bootTimeEpoch = timeClient.getEpochTime();
-  }
-  if (status == WL_CONNECTED) {
-    //delay(100);
+
+#ifdef ENABLE_OTA
+    // peters
     //setupOTA();
+    // peterm
+    if (status == WL_CONNECTED) {
+      delay(100);
+      setupOTA();
+    }
+#endif
   }
   
   
@@ -582,7 +575,9 @@ void setup() {
 
 // run repeatedly
 void loop() {
-  ArduinoOTA.handle();  
+#ifdef ENABLE_OTA
+  ArduinoOTA.handle();
+#endif
 #ifdef ENABLE_MQTT
    mqttClient.loop();
   if (pubsubEnabled) {
@@ -604,8 +599,8 @@ void loop() {
         lastMqttConnectionAttempt = millis();
       }      
     }
-  }
-#endif
+  }  
+#endif  
   // process any incoming data from the hub computer
   while (Serial.available()) {
     processByteFromComputer(Serial.read());
@@ -613,12 +608,14 @@ void loop() {
 
   // yield to other tasks to allow AWS messages to be received
   taskYIELD();
+  
   if (swReboot) {
     Serial.println("Rebooting on request...");
     // wait for BLE processing to settle
     delay(500);
     esp_restart();    
   }
+
   // do polling
   if (pollInterval) {
     unsigned long time = millis();
@@ -635,7 +632,7 @@ void loop() {
     time = millis();
     for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
       Device &d = devices[i];
-      if (d.connected() && time - d.lastMessageTime() > pollInterval * 2) {
+      if (d.connected() && time - d.lastMessageTime() > pollInterval * 3) {
         d.setConnected(false);
         digitalWrite(ledPin[i], LOW);
         sendDeviceInfo();
@@ -655,13 +652,6 @@ void loop() {
       }
     }
   }
-
-  //T0: GPIO 4
-  //T1: GPIO 0
-  //T2: GPIO 2
-  //int touch = touchRead(T0);
-  //int buttonRead = digitalRead(T1);
-  //Serial.printf("buttonRead=%d\n", buttonRead);
   
   // check for BLE config button (button will be LOW when pressed)
   if ((digitalRead(BUTTON_PIN) == LOW) && configMode == false) {
@@ -723,8 +713,12 @@ void mqttMessageHandler(char* topic, byte *payload, unsigned int length) {
 void handleIncomingMessage(char *topicName, int payloadLen, char *payLoad) {
   DynamicJsonDocument doc(256);
   deserializeJson(doc, payLoad);
-  String command = doc["command"];
-  runCommand(command.c_str(), doc);  
+  if (doc.containsKey("command")) {
+    String command = doc["command"];
+    runCommand(command.c_str(), doc);
+  } else {
+    updateActuators(doc);
+  }
 }
 
 
@@ -904,6 +898,54 @@ void runCommand(const char *command, DynamicJsonDocument &doc) {
 }
 
 
+void updateActuators(DynamicJsonDocument &doc) {
+  JsonObject obj = doc.as<JsonObject>();
+
+  // loop over devices; we'll send a message to each one (that has updated actuators)
+  for (int deviceIndex = 0; deviceIndex < MAX_DEVICE_COUNT; deviceIndex++) {
+    Device &d = devices[deviceIndex];
+    bool deviceUpdated = false;  // will be made true if the incoming message specified a new value for any component of this device
+
+    // look for any new actuator values for this device
+    for (JsonPair p : obj) {
+      String componentId(p.key().c_str());
+      int dashPos = componentId.indexOf('-');
+      String deviceId = componentId.substring(0, dashPos);
+      if (deviceId == d.id()) {  // probably faster to use C string comparison
+        String idSuffix = componentId.substring(dashPos + 1);
+        for (int i = 0; i < d.componentCount(); i++) {
+          Component &c = d.component(i);
+          if (idSuffix == c.idSuffix()) {  // probably faster to use C string comparison rather than create a String object on the fly
+            c.setActuatorValue(p.value());
+            deviceUpdated = true;
+          }
+        }
+      }
+    }
+
+    // if we updated this device, send a message to it
+    // we construct the message containing a value for each output component, in the order specified via the device metadata
+    if (deviceUpdated) {
+      Stream &s = devStream[deviceIndex];
+      s.print("s:");
+      bool first = true;
+      for (int i = 0; i < d.componentCount(); i++) {
+        Component &c = d.component(i);
+        if (c.dir() == 'o') {
+          if (first == false) {
+            s.print(',');
+          }
+          s.print(c.actuatorValue());
+          first = false;
+        }
+      }
+      s.println();
+      waitForResponse(deviceIndex);
+    }
+  }
+}
+
+
 void sendStatus() {
   if (config.consoleEnabled) {
     Serial.print("sending status: ");
@@ -911,13 +953,7 @@ void sendStatus() {
   DynamicJsonDocument doc(256);
   doc["wifi_network"] = config.wifiNetwork;
   doc["version"] = config.version;
-  // useful for tracing updated firmware where version has not changed, such as when testing OTA
-  doc["built"] = __TIMESTAMP__;
-  // useful for testing OTA
-  char localIp[80];
-  strncpy(localIp, WiFi.localIP().toString().c_str(), sizeof(localIp)-1);
-  doc["localIP"] = localIp;
-  // doc["wifi_password"] = config.wifiPassword;  // leave out wifi password for now
+  doc["built"] = __TIMESTAMP__;  // useful for tracing updated firmware where version has not changed, such as when testing OTA
   doc["host"] = HOST_ADDRESS;
   doc["uptime"] = millis();
   String now = timeClient.getFormattedTime(); 
@@ -992,9 +1028,6 @@ int hubPublish(const char* topic, const char* message) {
 }
 
 void sendDeviceInfo() {
-  if (config.consoleEnabled) {
-    Serial.print("sending device info: ");
-  }
   String json = "{";
   bool first = true;
   int deviceCount = 0;
@@ -1007,7 +1040,7 @@ void sendDeviceInfo() {
       json += '"';
       json += dev.id();
       json += "\":";
-      json += String("{\"version\": ") + dev.version() + ", \"components\": [";
+      json += String("{\"version\":") + dev.version() + ", \"plug\":" + (i + 1) + ", \"components\": [";
       for (int j = 0; j < dev.componentCount(); j++) {
         if (j)
           json += ',';
@@ -1027,9 +1060,11 @@ void sendDeviceInfo() {
   json += "}";
   String topicName = String(config.ownerId) + "/hub/" + config.hubId + "/devices";
   if (config.wifiEnabled) {
-    Serial.println(json);
+    if (config.consoleEnabled) {
+      Serial.printf("sending device info; size: %d\n", json.length());
+    }
     if (hubPublish(topicName.c_str(), json.c_str())) {  // send list of device info dictionaries
-      Serial.println("error publishing");    
+      Serial.printf("error publishing; message size: %d\n", json.length());
     }
   }
   if (config.consoleEnabled) {
@@ -1097,41 +1132,29 @@ void initConfig() {
   }  
 
   // load configuration from EEPROM if available
-  //Config myConfig;
   EEPROM.get(0, config);
   Serial.println("config loaded from flash memory:");
   dumpConfig(&config);        
 
-  if (config.version != FIRMWARE_VERSION) {
-    Serial.printf("Firmware version changed from %d to %d. Perform re-configuration of this hub!\n",
-      config.version, FIRMWARE_VERSION);
+  if (config.version != FIRMWARE_VERSION || config.version == 0) {
+    if (config.version) {
+      Serial.printf("Firmware version changed from %d to %d. Perform re-configuration of this hub!\n", config.version, FIRMWARE_VERSION);
+    } else {
+      Serial.println("Firmware version loaded from EEPROM is 0. Perform configuration of this hub!");
+    }
     config.version = FIRMWARE_VERSION;
     config.consoleEnabled = ENABLE_CONSOLE;
     config.wifiEnabled = ENABLE_WIFI;
     config.responseTimeout = RESPONSE_TIMEOUT;
     strncpy(config.ownerId, OWNER_ID, 64);
     strncpy(config.hubId, HUB_ID, 64);
-    //strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
-    //strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
-    strncpy(config.thingCrt, certificate_pem_crt, sizeof(config.thingCrt)-1);
-    strncpy(config.thingPrivateKey, private_pem_key, sizeof(config.thingPrivateKey)-1);
-  } else if (config.version == 0) {
-    Serial.println("Firmware version loaded from EEPROM is 0. Perform configuration of this hub!");
-    config.version = FIRMWARE_VERSION;
-    config.consoleEnabled = ENABLE_CONSOLE;
-    config.wifiEnabled = ENABLE_WIFI;
-    config.responseTimeout = RESPONSE_TIMEOUT;
-    strncpy(config.ownerId, OWNER_ID, 64);
-    strncpy(config.hubId, HUB_ID, 64);
-    //strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
-    //strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
+    strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
+    strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
     strncpy(config.thingCrt, certificate_pem_crt, sizeof(config.thingCrt)-1);
     strncpy(config.thingPrivateKey, private_pem_key, sizeof(config.thingPrivateKey)-1);
   } else {
     // loaded config seems OK.  
     Serial.printf("Loaded config - firmware version=%d.\n", config.version);
-    //strncpy(config.thingCrt, certificate_pem_crt, sizeof(config.thingCrt)-1);
-    //strncpy(config.thingPrivateKey, private_pem_key, sizeof(config.thingPrivateKey)-1);
   }
 }
 
@@ -1188,8 +1211,7 @@ class WifiNetworkCallbacks : public BLECharacteristicCallbacks {
       strncpy(config.wifiNetwork, value.c_str(), sizeof(config.wifiNetwork));
     }    
     //Serial.println(config.wifiNetwork);
-    ESP_LOGI(TAG, "%s", config.wifiNetwork);    
-      
+    ESP_LOGI(TAG, "%s", config.wifiNetwork);          
   }
 };
 
@@ -1215,7 +1237,7 @@ class OwnerIdCallbacks : public BLECharacteristicCallbacks {
       strncpy(config.ownerId, value.c_str(), sizeof(config.ownerId));
     }
     //Serial.println(config.ownerId);
-    ESP_LOGI(TAG,  "%s", config.ownerId);      
+    ESP_LOGI(TAG,  "%s", config.ownerId);
   }
 };
 
@@ -1266,9 +1288,7 @@ class HubCertCallbacks : public BLECharacteristicCallbacks {
     if (value == "clear") {
       config.thingCrt[0] = 0;
     } else {
-        // TODO: use strncpy to copy at least partial value contents if total length would
-        //   excceed capacity 
-      if (strlen(config.thingCrt) + strlen(value.c_str()) < sizeof(config.thingCrt) - 1) {
+      if (strlen(config.thingCrt) + strlen(value.c_str()) < sizeof(config.thingCrt) - 1) {  // don't need to do partial copy if too long; partial cert doesn't have any use
         strcat(config.thingCrt, value.c_str());
       }
     }
@@ -1287,7 +1307,7 @@ class HubKeyCallbacks : public BLECharacteristicCallbacks {
     if (value == "clear") {
       config.thingPrivateKey[0] = 0;
     } else {
-      if (strlen(config.thingPrivateKey) + strlen(value.c_str()) < sizeof(config.thingPrivateKey) - 1) {
+      if (strlen(config.thingPrivateKey) + strlen(value.c_str()) < sizeof(config.thingPrivateKey) - 1) {  // don't need to do partial copy if too long; partial key doesn't have any use
         strcat(config.thingPrivateKey, value.c_str());
       }
     }
