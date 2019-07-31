@@ -153,7 +153,7 @@ void setupOTA() {
 
   ArduinoOTA.begin();
 
-  Serial.print("OTA ready.");
+  Serial.println("OTA ready.");
 }
 #endif // ENABLE_OTA
 
@@ -279,7 +279,7 @@ void setup() {
   ledcSetup(0, 5000, 8);  // set up channel 0 to use 5000 Hz with 8 bit resolution
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
-  Serial.printf("setup before WiFi.begin: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());  
+  Serial.printf("setup before WiFi.begin: ESP.getFreeHeap=%d\n", ESP.getFreeHeap());  
   // connect to wifi  
   int status = WL_IDLE_STATUS;
   if (config.wifiEnabled) {
@@ -302,7 +302,7 @@ void setup() {
   }
 
 
-  Serial.printf("setup before awsConn.connect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());  
+  Serial.printf("setup before awsConn.connect: ESP.getFreeHeap=%d\n", ESP.getFreeHeap());  
   setStatusLED(HIGH);
 
   // see if config button is pressed
@@ -343,7 +343,7 @@ void setup() {
   }
 #endif // ENABLE_AWS_IOT 
   
-  Serial.printf("setup after awsConn.connect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());  
+  Serial.printf("setup after awsConn.connect: ESP.getFreeHeap=%d\n", ESP.getFreeHeap());  
   if (!awsIotConnected) {
     Serial.println("AWS IOT not connected: switching to BLE mode.");
     bleMode++;
@@ -412,15 +412,10 @@ void loop() {
     time = millis();
     for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
       Device &d = devices[i];
-      if (d.connected()) {
-        if (time - d.lastMessageTime() > DISCONNECT_INTERVAL) {
-          d.setConnected(false);
-          sendDeviceInfo();        
-        } else if (time - d.lastMessageTime() > LED_OFF_INTERVAL) {
-          digitalWrite(ledPin[i], LOW);
-        } else {
-          digitalWrite(ledPin[i], HIGH);  // TODO: would probably be faster to keep track of whether LED is already on
-        }
+      if (d.connected() && d.noResponseCount() >= 2) {
+        d.setConnected(false);
+        digitalWrite(ledPin[i], LOW);
+        sendDeviceInfo();   
       }
     }
   }
@@ -530,6 +525,13 @@ void waitForResponse(int deviceIndex) {
       }
     }
   }
+
+  // if we didn't get any bytes from the device, it may be disconnected
+  if (deviceMessageIndex) {
+    devices[deviceIndex].responded();
+  } else {
+    devices[deviceIndex].noResponse();
+  }
 }
 
 
@@ -551,7 +553,6 @@ void processMessageFromDevice(int deviceIndex) {
 
   // at this point we'll assume it's a valid message and update the last message time, which we use to detect disconnects
   Device &dev = devices[deviceIndex];
-  dev.setLastMessageTime(millis());
   
   // process the message
   char *command;

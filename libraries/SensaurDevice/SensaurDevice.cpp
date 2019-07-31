@@ -92,6 +92,7 @@ Device::Device() {
 	m_version[0] = 0;
 	m_connected = false;
 	m_componentCount = 0;
+	m_noResponseCount = 0;
 }
 
 

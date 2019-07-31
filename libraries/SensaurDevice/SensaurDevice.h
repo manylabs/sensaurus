@@ -64,10 +64,11 @@ public:
 	void setVersion(const char *version);
 
 	// current status
-	inline uint32_t lastMessageTime() const { return m_lastMessageTime; }
-	inline void setLastMessageTime(uint32_t lastMessageTime) { m_lastMessageTime = lastMessageTime; }
 	inline bool connected() const { return m_connected; }
-	inline void setConnected(bool connected) { m_connected = connected; }
+	inline void setConnected(bool connected) { m_connected = connected; if (m_connected) m_noResponseCount = 0; }
+	inline int noResponseCount() const { return m_noResponseCount; }
+	inline void noResponse() { m_noResponseCount++; }
+	inline void responded() { m_noResponseCount = 0; }
 
 	// component access
 	inline int componentCount() const { return m_componentCount; }
@@ -78,9 +79,9 @@ public:
 private:
 	char m_version[10];
 	char m_id[MAX_DEVICE_ID_LEN];
-	uint32_t m_lastMessageTime;
 	bool m_connected;
 	int m_componentCount;
+	int m_noResponseCount;
 	Component m_components[MAX_COMPONENT_COUNT];
 };
 
