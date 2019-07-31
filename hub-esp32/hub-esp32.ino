@@ -36,6 +36,8 @@
 #define CONSOLE_BAUD 9600
 #define DEV_BAUD 38400
 #define SERIAL_BUFFER_SIZE 120
+#define DISCONNECT_INTERVAL 10000
+#define LED_OFF_INTERVAL 2000
 
 // Note: for BLE to build, maximum_size specified in boards.txt needs to be adjusted from 1310720 to:
 // node32smax.upload.maximum_size=1900544
@@ -410,10 +412,15 @@ void loop() {
     time = millis();
     for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
       Device &d = devices[i];
-      if (d.connected() && time - d.lastMessageTime() > pollInterval * 3) {
-        d.setConnected(false);
-        digitalWrite(ledPin[i], LOW);
-        sendDeviceInfo();
+      if (d.connected()) {
+        if (time - d.lastMessageTime() > DISCONNECT_INTERVAL) {
+          d.setConnected(false);
+          sendDeviceInfo();        
+        } else if (time - d.lastMessageTime() > LED_OFF_INTERVAL) {
+          digitalWrite(ledPin[i], LOW);
+        } else {
+          digitalWrite(ledPin[i], HIGH);  // TODO: would probably be faster to keep track of whether LED is already on
+        }
       }
     }
   }

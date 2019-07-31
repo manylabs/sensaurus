@@ -96,7 +96,7 @@ Device::Device() {
 
 
 void Device::setId(const char *id) {
-	strncpy(m_id, id, 10);
+	strncpy(m_id, id, MAX_DEVICE_ID_LEN);
 }
 
 

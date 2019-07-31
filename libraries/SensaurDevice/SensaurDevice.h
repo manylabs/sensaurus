@@ -7,6 +7,7 @@
 #define MAX_TYPE_LEN 20
 #define MAX_MODEL_LEN 20
 #define MAX_UNITS_LEN 20
+#define MAX_DEVICE_ID_LEN 38
 
 
 class Component {
@@ -76,7 +77,7 @@ public:
 
 private:
 	char m_version[10];
-	char m_id[10];
+	char m_id[MAX_DEVICE_ID_LEN];
 	uint32_t m_lastMessageTime;
 	bool m_connected;
 	int m_componentCount;
