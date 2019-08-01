@@ -57,17 +57,17 @@ class Tester(object):
         elif msg.topic.endswith('devices'):
             message = json.loads(msg.payload)
             print('devices:')
-            print(message)
-
-            # check for test components
             self.test_component_ids = []
             for device_id, device_info in message.items():
+                comp_types = []
                 for comp_info in device_info['components']:
                     comp_type = comp_info['type']
-                    if comp_type.startswith('out') and comp_type.endswith('test'):
+                    comp_types.append(comp_type)
+                    if comp_type.startswith('out') and comp_type.endswith('test'):  # check for test components
                         comp_id = device_id + '-' + comp_info['type'][:5]
-                        print('found test component: %s' % comp_id)
+                        print('        found test component: %s' % comp_id)
                         self.test_component_ids.append(comp_id)
+                print('    id: %s, ver: %d, plug: %d, comps: %d (%s)' % (device_id, device_info['version'], device_info['plug'], len(comp_types), ', '.join(comp_types)))
 
     # send a command message to the hub's command topic; args can be a dictionary of additional command arguments
     def send_command(self, command, args=None):
@@ -79,7 +79,7 @@ class Tester(object):
 
     # send a command message to the hub's command topic; args can be a dictionary of additional command arguments
     def set_actuators(self, actuator_values):
-        topic_name = '%s/hub/%s/command' % (self.config['owner_id'], self.config['hub_id'])
+        topic_name = '%s/hub/%s/actuators' % (self.config['owner_id'], self.config['hub_id'])
         print('sending %d actuator values to %s' % (len(actuator_values), topic_name))
         self.mqttc.publish(topic_name, json.dumps(actuator_values))
 
