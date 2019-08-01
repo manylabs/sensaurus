@@ -65,7 +65,7 @@ public:
 
 	// current status
 	inline bool connected() const { return m_connected; }
-	inline void setConnected(bool connected) { m_connected = connected; if (m_connected) m_noResponseCount = 0; }
+	inline void setConnected(bool connected) { m_connected = connected; }
 	inline int noResponseCount() const { return m_noResponseCount; }
 	inline void noResponse() { m_noResponseCount++; }
 	inline void responded() { m_noResponseCount = 0; }

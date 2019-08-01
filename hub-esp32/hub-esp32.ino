@@ -414,6 +414,7 @@ void loop() {
       Device &d = devices[i];
       if (d.connected() && d.noResponseCount() >= 2) {
         d.setConnected(false);
+        d.resetComponents();  // we use component count to decide whether to request; might as well request metadata rather than values on disconnected devices
         digitalWrite(ledPin[i], LOW);
         sendDeviceInfo();   
       }
@@ -513,7 +514,8 @@ void waitForResponse(int deviceIndex) {
         Device &d = devices[deviceIndex];
         if (d.connected() == false) {
           d.setConnected(true);
-          d.resetComponents();
+          d.responded();  // reset the no-response counter
+          d.resetComponents();  // clear out all the components until we get a meta-data message
         }
         processMessageFromDevice(deviceIndex);
         break;
@@ -546,7 +548,7 @@ void processMessageFromDevice(int deviceIndex) {
 
   if (checksumOk(deviceMessage, true) == 0) {
     if (config.consoleEnabled) {
-      Serial.println("e:device crc");
+      Serial.printf("e:checksum error on plug %d\n", deviceIndex + 1);
     }
     return;
   }
