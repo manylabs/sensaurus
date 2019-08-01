@@ -737,8 +737,9 @@ void sendStatus() {
   String message;
   serializeJson(doc, message);
   if (!bleMode && config.wifiEnabled) {
-    if (awsConn.publish(topicName.c_str(), message.c_str())) {
-      Serial.println("error publishing");
+    int result = awsConn.publish(topicName.c_str(), message.c_str());
+    if (result) {
+      Serial.printf("sendStatus: error publishing %s to %s code %d\n" , message.c_str(), topicName.c_str(), result);
     }
   }
   if (config.consoleEnabled) {
@@ -770,8 +771,9 @@ void sendDeviceInfo() {
       first = false;
       String topicName = String(config.ownerId) + "/device/" + dev.id();
       if (config.wifiEnabled) {
-        if (awsConn.publish(topicName.c_str(), config.hubId)) {  // send hub ID for this device
-          Serial.println("error publishing");
+        int result = awsConn.publish(topicName.c_str(), config.hubId);  // send hub ID for this device
+        if (result) {
+          Serial.printf("sendDeviceInfo: error publishing device info topicName %s %d\n", topicName.c_str(), result);
         }
       }
       deviceCount++;
@@ -783,8 +785,9 @@ void sendDeviceInfo() {
     if (config.consoleEnabled) {
       Serial.printf("sending device info; size: %d\n", json.length());
     }
-    if (awsConn.publish(topicName.c_str(), json.c_str())) {  // send list of device info dictionaries
-      Serial.printf("error publishing; message size: %d\n", json.length());
+    int result = awsConn.publish(topicName.c_str(), json.c_str()); // send list of device info dictionaries
+    if (result) {
+      Serial.printf("error publishing; message size: %d code %d\n", json.length(), result);
     }
   }
   if (config.consoleEnabled) {
@@ -819,8 +822,9 @@ void sendSensorValues(unsigned long time) {
   String message;
   serializeJson(doc, message);
   if (config.wifiEnabled) {
-    if (awsConn.publish(topicName.c_str(), message.c_str())) {
-      Serial.println("error publishing");
+    int result = awsConn.publish(topicName.c_str(), message.c_str());
+    if (result) {
+      Serial.printf("sendSensorValues: error publishing %s to %s code %d\n", message.c_str(), topicName.c_str(), result);
     }
   }
   if (config.consoleEnabled) {
