@@ -226,7 +226,8 @@ bool mqttReconnect() {
     } else {
       ESP_LOGE(TAG, "mqttReconnect: failed, state=%d. Will try again in 5 seconds", mqttClient.state());
       // Wait 5 seconds before retrying
-      delay(5000);
+      delay(1000);
+      retries++;
     }
     if (retries >= MAX_MQTT_CONNECT_RETRIES) {
       ESP_LOGE(TAG, "mqttReconnect: connect failed: max retries exceeded");
@@ -241,10 +242,11 @@ static volatile bool wifi_connected = false;
 
 void WiFiEvent(WiFiEvent_t event)
 {
+  ESP_LOGD(TAG, "WiFiEvent: %d", event);
   switch (event)
   {
   case SYSTEM_EVENT_AP_START:
-    Serial.println("SYSTEM_EVENT_AP_START");
+    ESP_LOGD(TAG, "WiFiEvent: %s", "SYSTEM_EVENT_AP_START");
     //can set ap hostname here
     // WiFi.softAPsetHostname(_node_name.c_str());
     //enable ap ipv6 here
@@ -252,34 +254,36 @@ void WiFiEvent(WiFiEvent_t event)
     break;
 
   case SYSTEM_EVENT_STA_START:
-    Serial.println("SYSTEM_EVENT_STA_START");
+    ESP_LOGD(TAG, "WiFiEvent: %s", "SYSTEM_EVENT_STA_START");
     //set sta hostname here
     //WiFi.setHostname(_node_name.c_str());
     break;
   case SYSTEM_EVENT_STA_CONNECTED:
-    Serial.println("SYSTEM_EVENT_STA_CONNECTED");
+    ESP_LOGD(TAG, "WiFiEvent: %s", "SYSTEM_EVENT_STA_CONNECTED");
     //enable sta ipv6 here
     //WiFi.enableIpV6();
     break;
   case SYSTEM_EVENT_AP_STA_GOT_IP6:
     //both interfaces get the same event
-    Serial.print("STA IPv6: ");
+    ESP_LOGD(TAG, "WiFiEvent: %s", "STA IPv6: ");
     Serial.println(WiFi.localIPv6());
     Serial.print("AP IPv6: ");
     Serial.println(WiFi.softAPIPv6());
     break;
   case SYSTEM_EVENT_STA_GOT_IP:
-    Serial.println("WiFi connected");
+    ESP_LOGD(TAG, "WiFiEvent: %s", "SYSTEM_EVENT_STA_GOT_IP");
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());
     wifi_connected = true;
     break;
   case SYSTEM_EVENT_STA_DISCONNECTED:
     wifi_connected = false;
-    Serial.println("STA Disconnected");
+    ESP_LOGD(TAG, "WiFiEvent: SYSTEM_EVENT_STA_DISCONNECTED");
     delay(1000);
     //WiFi.begin(ssid, password);
     break;
+  default:
+    break;  
   }
 }
 
@@ -454,7 +458,7 @@ void setup() {
   if (config.wifiEnabled) {
     int retries = 0;
     while (status != WL_CONNECTED) {
-      //WiFi.onEvent(WiFiEvent);      
+      WiFi.onEvent(WiFiEvent);      
       status = WiFi.begin(config.wifiNetwork, config.wifiPassword);
       if (status != WL_CONNECTED) {
         delay(2000);
@@ -868,7 +872,17 @@ void runCommand(const char *command, DynamicJsonDocument &doc) {
     Config myConfig;
     EEPROM.get(0, myConfig);
     Serial.println("settings currently in EEPROM:");
-    dumpConfig(&myConfig);        
+    dumpConfig(&myConfig);  
+
+  } else if (strcmp(command, "wifi_begin") == 0) {  // restart wifi
+      int status = WL_IDLE_STATUS;
+      status = WiFi.begin(config.wifiNetwork, config.wifiPassword);
+      if (status == WL_CONNECTED) {
+          ESP_LOGD(TAG, "connected to wifi, IP address: ");   
+          Serial.println(WiFi.localIP());
+      } else {
+        ESP_LOGE(TAG, "reconnect to wifi failed: staus=%d", status);
+      }
   } else if (strcmp(command, "s") == 0) {  // start sending sensor values once a second
     pollInterval = 1000;
     sendInterval = 1000;
@@ -909,7 +923,9 @@ void runCommand(const char *command, DynamicJsonDocument &doc) {
       // mark unit for software reboot (exit BLE mode)
       bleMode = 0;
       swReboot = 1;
-  }  
+  } else {
+      ESP_LOGD(TAG, "command not recognized: %s", command);       
+  }
 }
 
 
@@ -968,14 +984,23 @@ void sendStatus() {
   DynamicJsonDocument doc(256);
   doc["wifi_network"] = config.wifiNetwork;
   doc["version"] = config.version;
-  doc["built"] = __TIMESTAMP__;  // useful for tracing updated firmware where version has not changed, such as when testing OTA
   doc["host"] = HOST_ADDRESS;
+  // useful for testing OTA, wifi bug tracking etc.
+  //   it can be removed later
+  // ---- start of debug info
+  // removed by peters, re-added by peterm
+  //
+  String localIp = String(WiFi.localIP().toString());
+  doc["localIP"] = localIp;
+  doc["built"] = __TIMESTAMP__;  // useful for tracing updated firmware where version has not changed, such as when testing OTA
   doc["uptime"] = millis();
   String now = timeClient.getFormattedTime(); 
   //Time.format("%Y-%m-%d %H:%M:%S");
   doc["bootTime"] = bootTime;
   doc["bootTimeEpoch"] = bootTimeEpoch;
   doc["hubTime"] = now;
+  // ---- end of debug info
+  // end of removed by peters
   String topicName = String(config.ownerId) + "/hub/" + config.hubId + "/status";
   String message;
   serializeJson(doc, message);
