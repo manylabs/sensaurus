@@ -49,6 +49,8 @@
 #define CONSOLE_BAUD 9600
 #define DEV_BAUD 38400
 #define SERIAL_BUFFER_SIZE 120
+#define DISCONNECT_INTERVAL 10000
+#define LED_OFF_INTERVAL 2000
 
 // Note: for BLE to build, maximum_size specified in boards.txt needs to be adjusted from 1310720 to:
 // node32smax.upload.maximum_size=1900544
@@ -446,7 +448,7 @@ void setup() {
   ledcSetup(0, 5000, 8);  // set up channel 0 to use 5000 Hz with 8 bit resolution
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
-  Serial.printf("setup before WiFi.begin: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());  
+  Serial.printf("setup before WiFi.begin: ESP.getFreeHeap=%d\n", ESP.getFreeHeap());  
   // connect to wifi  
   int status = WL_IDLE_STATUS;
   if (config.wifiEnabled) {
@@ -480,7 +482,7 @@ void setup() {
   }
 
 
-  Serial.printf("setup before awsConn.connect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());  
+  Serial.printf("setup before awsConn.connect: ESP.getFreeHeap=%d\n", ESP.getFreeHeap());  
   setStatusLED(HIGH);
 
   // see if config button is pressed
@@ -520,6 +522,7 @@ void setup() {
   } else {
       Serial.println("Skipped connecting to AWS IOT");    
   }
+  //peters deleted this:
   Serial.printf("setup after awsConn.connect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());  
 #elif defined(ENABLE_MQTT)
   mqttClient.setServer(mqtt_server, mqtt_port);
@@ -531,7 +534,11 @@ void setup() {
   pubsubEnabled = true;     
 #endif // ENABLE_AWS_IOT 
   
+  //peters deleted this:
+  Serial.printf("setup after awsConn.connect: ESP.getFreeHeap=%d\n", ESP.getFreeHeap());  
   if (!awsIotConnected) {
+  // we could use pubsubEnabled instead of awsIotConnected if we wanted to disabled  BLE
+  //  when both aws iot and simple mqtt are up.
   //if (!pubsubEnabled) {
     Serial.println("AWS IOT/MQTT not connected: switching to BLE mode.");
     bleMode++;
@@ -632,10 +639,11 @@ void loop() {
     time = millis();
     for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
       Device &d = devices[i];
-      if (d.connected() && time - d.lastMessageTime() > pollInterval * 3) {
+      if (d.connected() && d.noResponseCount() >= 2) {
         d.setConnected(false);
+        d.resetComponents();  // we use component count to decide whether to request; might as well request metadata rather than values on disconnected devices
         digitalWrite(ledPin[i], LOW);
-        sendDeviceInfo();
+        sendDeviceInfo();   
       }
     }
   }
@@ -743,7 +751,8 @@ void waitForResponse(int deviceIndex) {
         Device &d = devices[deviceIndex];
         if (d.connected() == false) {
           d.setConnected(true);
-          d.resetComponents();
+          d.responded();  // reset the no-response counter
+          d.resetComponents();  // clear out all the components until we get a meta-data message
         }
         processMessageFromDevice(deviceIndex);
         break;
@@ -754,6 +763,13 @@ void waitForResponse(int deviceIndex) {
         deviceMessageIndex++;
       }
     }
+  }
+
+  // if we didn't get any bytes from the device, it may be disconnected
+  if (deviceMessageIndex) {
+    devices[deviceIndex].responded();
+  } else {
+    devices[deviceIndex].noResponse();
   }
 }
 
@@ -769,14 +785,13 @@ void processMessageFromDevice(int deviceIndex) {
 
   if (checksumOk(deviceMessage, true) == 0) {
     if (config.consoleEnabled) {
-      Serial.println("e:device crc");
+      Serial.printf("e:checksum error on plug %d\n", deviceIndex + 1);
     }
     return;
   }
 
   // at this point we'll assume it's a valid message and update the last message time, which we use to detect disconnects
   Device &dev = devices[deviceIndex];
-  dev.setLastMessageTime(millis());
   
   // process the message
   char *command;

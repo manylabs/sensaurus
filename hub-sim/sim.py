@@ -73,14 +73,17 @@ class Hub(object):
     # send info about devices currently connected to this hub
     def send_device_info(self):
         device_infos = {}
+        plug = 1
         for d in self.devices:
             device_info = {
                 'version': 1,
+                'plug': plug,
                 'components': d.components,  # components is a list of dictionaries
             }
             device_infos[d.id] = device_info
             topic_name = '%s/device/%s' % (self.owner_id, d.id)
             self.mqttc.publish(topic_name, self.id, qos=1)  # send hub ID for this device
+            plug += 1
         topic_name = '%s/hub/%s/devices' % (self.owner_id, self.id)
         self.mqttc.publish(topic_name, json.dumps(device_infos), qos=1)  # send list of device info dictionaries
         print('sent %d devices' % len(device_infos))

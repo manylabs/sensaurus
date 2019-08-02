@@ -4,3 +4,4 @@ host: host.amazonaws.com
 ca_path: cert/AmazonRootCA1.pem
 cert_path: cert/thing-certificate.pem.crt
 key_path: cert/thing-private.pem.key
+serial_port: /dev/ttyX

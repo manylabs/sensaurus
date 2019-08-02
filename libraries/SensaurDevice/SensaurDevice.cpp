@@ -92,11 +92,12 @@ Device::Device() {
 	m_version[0] = 0;
 	m_connected = false;
 	m_componentCount = 0;
+	m_noResponseCount = 0;
 }
 
 
 void Device::setId(const char *id) {
-	strncpy(m_id, id, 10);
+	strncpy(m_id, id, MAX_DEVICE_ID_LEN);
 }
 
 
