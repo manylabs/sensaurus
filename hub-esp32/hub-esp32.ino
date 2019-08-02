@@ -440,7 +440,6 @@ void setup() {
   ledcSetup(0, 5000, 8);  // set up channel 0 to use 5000 Hz with 8 bit resolution
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
-  displayFreeHeap("setup before WiFi.begin");
   // connect to wifi  
   int status = WL_IDLE_STATUS;
   if (config.wifiEnabled) {
@@ -473,7 +472,6 @@ void setup() {
     Serial.println("wifiEnabled is false: not connected to wifi.");    
   }
 
-  displayFreeHeap("setup before awsConn.connect");
   
   setStatusLED(HIGH);
 
@@ -514,23 +512,16 @@ void setup() {
   } else {
       Serial.println("Skipped connecting to AWS IOT");    
   }
-  //peters deleted this:
-  displayFreeHeap("setup after awsConn.connect");
   
 #elif defined(ENABLE_MQTT)
   mqttClient.setServer(mqtt_server, mqtt_port);
   mqttClient.setCallback(mqttMessageHandler);
-  //mqttClient.setCallback(callback);
-  displayFreeHeap("setup before mqttReconnect");
   
   bool rc = mqttReconnect();
-  displayFreeHeap("setup after mqttReconnect");
   
   pubsubEnabled = true;     
 #endif // ENABLE_AWS_IOT 
   
-  //peters deleted this:
-  displayFreeHeap("setup after awsConn.connect");  
   
   if (!awsIotConnected) {
   // we could use pubsubEnabled instead of awsIotConnected if we wanted to disabled  BLE
@@ -978,7 +969,6 @@ void sendStatus() {
   // useful for testing OTA, wifi bug tracking etc.
   //   it can be removed later
   // ---- start of debug info
-  // removed by peters, re-added by peterm
   //
   String localIp = String(WiFi.localIP().toString());
   doc["localIP"] = localIp;
@@ -990,7 +980,6 @@ void sendStatus() {
   doc["bootTimeEpoch"] = bootTimeEpoch;
   doc["hubTime"] = now;
   // ---- end of debug info
-  // end of removed by peters
   String topicName = String(config.ownerId) + "/hub/" + config.hubId + "/status";
   String message;
   serializeJson(doc, message);
@@ -1349,7 +1338,6 @@ class HubKeyCallbacks : public BLECharacteristicCallbacks {
 
 
 void startBLE() {
-  displayFreeHeap("startBLE");
   
   BLEDevice::init("Sensaurus");
   BLEServer *server = BLEDevice::createServer();
@@ -1387,7 +1375,6 @@ void startBLE() {
   advertising->start();
   
   ESP_LOGD(TAG, "startBLE: Started advertising");
-  displayFreeHeap("startBLE: after");
   
 }
 
