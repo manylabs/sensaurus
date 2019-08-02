@@ -143,11 +143,14 @@ auto blueLed = JLed(2);
 // *******************
 // Debug functions ***
 // *******************
-void displayFreeHeap() {
-   Serial.printf("\nHeap size: %d\n", ESP.getHeapSize());
-   Serial.printf("Free Heap: %d\n", heap_caps_get_free_size(MALLOC_CAP_8BIT));
-   Serial.printf("Min Free Heap: %d\n", heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
-   Serial.printf("Max Alloc Heap: %d\n", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+void displayFreeHeap(const char* title) {
+#if LOG_LOCAL_LEVEL >= ESP_LOG_VERBOSE
+  Serial.print(title);
+  Serial.printf("\nHeap size: %d\n", ESP.getHeapSize());
+  Serial.printf("Free Heap: %d\n", heap_caps_get_free_size(MALLOC_CAP_8BIT));
+  Serial.printf("Min Free Heap: %d\n", heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+  Serial.printf("Max Alloc Heap: %d\n", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+#endif  
 }
 
 
@@ -323,12 +326,10 @@ void setupOTA() {
 
   ArduinoOTA.begin();
 
-  // peterm:
-  char localIp[80];
-  strncpy(localIp, WiFi.localIP().toString().c_str(), sizeof(localIp)-1);  
-  Serial.printf("OTA ready. IP address: %s\n", localIp);
-  // peters: Serial.print("OTA ready.");
-  
+  // we need ip address here so that we can test OTA via push from arduino ide
+  Serial.print("OTA ready. IP address: ");
+  Serial.println(WiFi.localIP());
+    
 }
 #endif // ENABLE_OTA
 
@@ -339,19 +340,6 @@ void dumpConfig(const Config* c) {
     uint64_t chipid = ESP.getEfuseMac();
     uint16_t id_high2 = (uint16_t)(chipid>>32);
     uint32_t id_low4 = (uint32_t)chipid;
-    /*
-    Serial.printf("mac=%04X%08X, size=%d; %d,...,%s,%s,%s,%s\n%s\n%s\n", id_high2, id_low4,
-    //        Serial.printf("size=%d; %d,...,%s,%s,%s,%s\n%s\n%s\n", 
-      sizeof(Config), 
-      c->version, 
-      c->ownerId, 
-      c->hubId,
-      c->wifiNetwork,
-      c->wifiPassword,
-      c->thingCrt,
-      c->thingPrivateKey
-      );
-    */
     ESP_LOGV(TAG, "mac=%04X%08X, size=%d; %d,...,%s,%s,%s,%s\n%s\n%s\n", 
         id_high2, 
         id_low4,
@@ -452,7 +440,7 @@ void setup() {
   ledcSetup(0, 5000, 8);  // set up channel 0 to use 5000 Hz with 8 bit resolution
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
-  Serial.printf("setup before WiFi.begin: ESP.getFreeHeap=%d\n", ESP.getFreeHeap());  
+  displayFreeHeap("setup before WiFi.begin");
   // connect to wifi  
   int status = WL_IDLE_STATUS;
   if (config.wifiEnabled) {
@@ -485,8 +473,8 @@ void setup() {
     Serial.println("wifiEnabled is false: not connected to wifi.");    
   }
 
-
-  Serial.printf("setup before awsConn.connect: ESP.getFreeHeap=%d\n", ESP.getFreeHeap());  
+  displayFreeHeap("setup before awsConn.connect");
+  
   setStatusLED(HIGH);
 
   // see if config button is pressed
@@ -527,19 +515,23 @@ void setup() {
       Serial.println("Skipped connecting to AWS IOT");    
   }
   //peters deleted this:
-  Serial.printf("setup after awsConn.connect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());  
+  displayFreeHeap("setup after awsConn.connect");
+  
 #elif defined(ENABLE_MQTT)
   mqttClient.setServer(mqtt_server, mqtt_port);
   mqttClient.setCallback(mqttMessageHandler);
   //mqttClient.setCallback(callback);
-  Serial.printf("setup before mqttReconnect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());    
+  displayFreeHeap("setup before mqttReconnect");
+  
   bool rc = mqttReconnect();
-  Serial.printf("setup after mqttReconnect: ESP.getFreeHeap= %d\n", ESP.getFreeHeap()); 
+  displayFreeHeap("setup after mqttReconnect");
+  
   pubsubEnabled = true;     
 #endif // ENABLE_AWS_IOT 
   
   //peters deleted this:
-  Serial.printf("setup after awsConn.connect: ESP.getFreeHeap=%d\n", ESP.getFreeHeap());  
+  displayFreeHeap("setup after awsConn.connect");  
+  
   if (!awsIotConnected) {
   // we could use pubsubEnabled instead of awsIotConnected if we wanted to disabled  BLE
   //  when both aws iot and simple mqtt are up.
@@ -563,9 +555,7 @@ void setup() {
     bootTimeEpoch = timeClient.getEpochTime();
 
 #ifdef ENABLE_OTA
-    // peters
-    //setupOTA();
-    // peterm
+    // peterm: delay needed, otherwise OTA won't work
     if (status == WL_CONNECTED) {
       delay(100);
       setupOTA();
@@ -1359,7 +1349,8 @@ class HubKeyCallbacks : public BLECharacteristicCallbacks {
 
 
 void startBLE() {
-  ESP_LOGD(TAG, "startBLE: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());
+  displayFreeHeap("startBLE");
+  
   BLEDevice::init("Sensaurus");
   BLEServer *server = BLEDevice::createServer();
   BLEService *service = server->createService(BLE_SERVICE_UUID);
@@ -1396,7 +1387,8 @@ void startBLE() {
   advertising->start();
   
   ESP_LOGD(TAG, "startBLE: Started advertising");
-  ESP_LOGD(TAG, "startBLE: after: ESP.getFreeHeap= %d\n", ESP.getFreeHeap());
+  displayFreeHeap("startBLE: after");
+  
 }
 
 
