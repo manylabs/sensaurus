@@ -409,9 +409,10 @@ unsigned long lastTimeUpdate = 0;  // msec since boot
 void setup() {
 
   // uncomment this line to get more information from components during debugging
-  //esp_log_level_set("*", ESP_LOG_WARN);
-  esp_log_level_set("*", ESP_LOG_VERBOSE);
-  esp_log_level_set(TAG, ESP_LOG_VERBOSE);
+  // Use ESP_LOG_WARN, ESP_LOG_INFO, ESP_LOG_DEBUG, ESP_LOG_VERBOSE to get less or more verbosity
+  // A good value for production release is ESP_LOG_WARN or ESP_LOG_INFO
+  esp_log_level_set("*", ESP_LOG_WARN);
+  esp_log_level_set(TAG, ESP_LOG_INFO);
   
   // init. bleMode persistent variable if needed 
   // ESP_RST_SW Software reset via esp_restart.
@@ -445,7 +446,8 @@ void setup() {
   if (config.wifiEnabled) {
     int retries = 0;
     while (status != WL_CONNECTED) {
-      WiFi.onEvent(WiFiEvent);      
+      // enable onEvent call if need to trace detailed wifi behavior
+      //WiFi.onEvent(WiFiEvent);      
       status = WiFi.begin(config.wifiNetwork, config.wifiPassword);
       if (status != WL_CONNECTED) {
         delay(2000);
@@ -1005,34 +1007,29 @@ int hubPublish(const char* topic, const char* message) {
     ESP_LOGE(TAG, "mqttClient.publish: error: not connected");    
     return 1;
   }
-  //Serial.printf("mqttClient.publish: %s: %s\n", topic, message);
-  bool rc;
-  if (strlen(message) > MQTT_MAX_BUFFER_SIZE) {
-    rc = mqttClient.beginPublish(topic, strlen(message), false);  
-    if (!rc)  {
-      ESP_LOGE(TAG, "mqttClient.beginPublish failed: rc=%d, state=%d\n", rc, mqttClient.state());
-    } else {
-      rc = mqttClient.write((const byte*)message, MQTT_MAX_BUFFER_SIZE);
+  bool rc = mqttClient.beginPublish(topic, strlen(message), false);  
+  if (!rc)  {
+    ESP_LOGE(TAG, "mqttClient.beginPublish failed: rc=%d, state=%d\n", rc, mqttClient.state());
+  } else {
+    int remainingLength = strlen(message);
+    while (remainingLength > 0) {
+      int toSend = min(remainingLength, MQTT_MAX_BUFFER_SIZE); 
+      int offset = strlen(message)-remainingLength;
+      rc = mqttClient.write((const byte*)&message[offset], toSend);
       if (!rc) {
         ESP_LOGE(TAG, "mqttClient.write failed: rc=%d, state=%d\n", rc, mqttClient.state());    
+        // use goto because it simplifies logic and makes processing
+        //  less error prone
         goto do_return;
       }
-      //rc = mqttClient.print(&message[MQTT_MAX_BUFFER_SIZE-1]);
-      // also send terminating null.
-      rc = mqttClient.write((const byte*) &message[MQTT_MAX_BUFFER_SIZE], strlen(message)-MQTT_MAX_BUFFER_SIZE+1);
-      if (!rc) {
-        ESP_LOGE(TAG, "mqttClient.print failed: rc=%d, state=%d\n", rc, mqttClient.state());    
-        goto do_return;
-      }
-      rc = mqttClient.endPublish();
-      if (!rc) {
-        ESP_LOGE(TAG, "mqttClient.endPublish failed: rc=%d, state=%d\n", rc, mqttClient.state());    
-      }      
-    }
-    
-  } else {
-    rc = mqttClient.publish(topic, message);    
-  }
+      ESP_LOGD(TAG, "mqttClient.write: wrote %d bytes from offset %d\n", toSend, offset);    
+      remainingLength -= toSend;      
+    } 
+    rc = mqttClient.endPublish();
+    if (!rc) {
+      ESP_LOGE(TAG, "mqttClient.endPublish failed: rc=%d, state=%d\n", rc, mqttClient.state());    
+    }      
+  }    
   do_return:
   if (!rc) {
     ESP_LOGE(TAG, "mqttClient publishing failed: rc=%d, state=%d\n", rc, mqttClient.state());
