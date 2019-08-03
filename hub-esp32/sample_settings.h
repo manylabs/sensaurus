@@ -10,7 +10,16 @@ static unsigned int constexpr RESPONSE_TIMEOUT = 50;  // msec
 static bool constexpr ENABLE_CONSOLE = 1;
 static bool constexpr ENABLE_WIFI = 0;
 
-// WiFi and MQTT configuration
+// Vanilla MQTT configuration
+
+static const char* MQTT_USER     = "mqttuser";
+static const char* MQTT_PASSWORD = "mqttpw";
+static const unsigned int MQTT_PORT = 1883;
+static const char* MQTT_SERVER   = "mqttserver";
+ 
+
+
+// WiFi and AWS IOT MQTT configuration
 static auto constexpr WIFI_SSID = "network name";
 static auto constexpr WIFI_PASSWORD = "password";
 static auto constexpr HOST_ADDRESS = "x.amazonaws.com";

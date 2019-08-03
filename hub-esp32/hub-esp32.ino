@@ -161,21 +161,6 @@ void displayFreeHeap(const char* title) {
 const int MAX_MQTT_CONNECT_RETRIES = 3;
 static const int MQTT_MAX_BUFFER_SIZE = MQTT_MAX_PACKET_SIZE-10;
 
-#define MQTT_USER "gamgaxzt"
-#define MQTT_PASSWORD "xxx"
-#define mqtt_port 13125
-const char* mqtt_server = "postman.cloudmqtt.com";
-/*
-#define MQTT_USER ""
-#define MQTT_PASSWORD ""
-#define mqtt_port 1883
-// mac
-const char* mqtt_server = "192.168.86.137";
-// rpi - wifi
-//const char* mqtt_server = "192.168.86.144";
-//const char* mqtt_server = "192.168.1.67";
-*/
-
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 // last time mqtt reconnect was attempted, in millis
@@ -516,7 +501,7 @@ void setup() {
   }
   
 #elif defined(ENABLE_MQTT)
-  mqttClient.setServer(mqtt_server, mqtt_port);
+  mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
   mqttClient.setCallback(mqttMessageHandler);
   
   bool rc = mqttReconnect();
