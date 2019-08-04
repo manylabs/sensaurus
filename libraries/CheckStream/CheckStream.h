@@ -29,7 +29,7 @@ public:
 			m_crc = crc16_update(m_crc, data);
 			m_empty = false;
 		}
-		return m_stream.write(data);
+		return m_stream.print((char) data);
 	}
 
 	// direct pass-through to stream class
