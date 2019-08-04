@@ -11,6 +11,7 @@
 #define RED_PIN 9
 #define GREEN_PIN 10
 #define BLUE_PIN 11
+#define ARD_LED_PIN 13
 
 
 // communication line to senaur hub
@@ -76,11 +77,14 @@ void processMessage(char *cmd, char *args[], int argCount) {
 
   // query current values
   if (strcmp(cmd, "v") == 0) {
+    digitalWrite(ARD_LED_PIN, HIGH);
     hubStream.print("v:");
     hubStream.print(val1);
     hubStream.print(',');
     hubStream.print(val2);
     hubStream.println();
+    delay(20);
+    digitalWrite(ARD_LED_PIN, LOW);
 
   // set values
   } else if (strcmp(cmd, "s") == 0 && argCount >= 2) {
