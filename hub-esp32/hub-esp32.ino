@@ -1,9 +1,9 @@
 // uncomment to allow BLE to be operational
-#define ENABLE_BLE
+//#define ENABLE_BLE
 // uncomment to allow aws iot connections
-//#define ENABLE_AWS_IOT
+#define ENABLE_AWS_IOT
 // only one of ENABLE_AWS_IOT and ENABLE_MQTT must be defined
-#define ENABLE_MQTT
+//#define ENABLE_MQTT
 
 
 #include <EEPROM.h>
