@@ -4,6 +4,8 @@
 #define ENABLE_AWS_IOT
 // only one of ENABLE_AWS_IOT and ENABLE_MQTT must be defined
 //#define ENABLE_MQTT
+// uncomment to add OTA support
+//#define ENABLE_OTA
 
 
 #include <EEPROM.h>
@@ -49,8 +51,6 @@
 #define CONSOLE_BAUD 9600
 #define DEV_BAUD 38400
 #define SERIAL_BUFFER_SIZE 120
-#define DISCONNECT_INTERVAL 10000
-#define LED_OFF_INTERVAL 2000
 
 // Note: for BLE to build, maximum_size specified in boards.txt needs to be adjusted from 1310720 to:
 // node32smax.upload.maximum_size=1900544
@@ -61,12 +61,6 @@
 // app0,     app,  ota_0,   0x10000, 0x1D0000,
 // app1,     app,  ota_1,   0x1E0000,0x1D0000,
 // spiffs,   data, spiffs,  0x3B0000,0x50000,
-
-// uncomment to allow BLE to be operational
-#define ENABLE_BLE
-// uncomment to allow aws iot connections
-//#define ENABLE_AWS_IOT
-#define ENABLE_OTA
 
 // used for ESP32 logging
 static const char* TAG = "sensaurus";
@@ -388,6 +382,7 @@ WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP);
 unsigned long lastEpochSeconds = 0;  // seconds since epoch start (from NTP)
 unsigned long lastTimeUpdate = 0;  // msec since boot
+unsigned long lastMemoryDisplay = 0;
 
 
 // run once on startup
@@ -458,7 +453,6 @@ void setup() {
   } else {
     Serial.println("wifiEnabled is false: not connected to wifi.");    
   }
-
   
   setStatusLED(HIGH);
 
@@ -540,15 +534,12 @@ void setup() {
     }
 #endif
   }
-  
-  
 
   if (status == WL_CONNECTED) {
     // send current status
     sendStatus();
   }
   Serial.println("ready");
-
 }
 
 
@@ -644,6 +635,14 @@ void loop() {
   }
   if (configMode) {
     ledcWrite(0, (millis() >> 3) & 255);  // fade LED when in config mode
+  }
+
+  // display memory usage
+  if (config.consoleEnabled) {
+    if (time - lastMemoryDisplay > 5 * 60 * 1000) {
+      displayFreeHeap("loop");
+      lastMemoryDisplay = time;
+    }
   }
 
   // get network time once an hour
