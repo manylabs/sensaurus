@@ -245,8 +245,8 @@ bool mqttReconnect() {
       }            
       return rc;
     } else {
-      ESP_LOGE(TAG, "mqttReconnect: failed, state=%d. Will try again in 5 seconds", mqttClient.state());
-      // Wait 5 seconds before retrying
+      ESP_LOGE(TAG, "mqttReconnect: failed, state=%d. Will try again in 1 second.", mqttClient.state());
+      // Wait 1 seconds before retrying
       delay(1000);
       retries++;
     }
@@ -358,7 +358,7 @@ void dumpConfig(const Config* c) {
     uint64_t chipid = ESP.getEfuseMac();
     uint16_t id_high2 = (uint16_t)(chipid>>32);
     uint32_t id_low4 = (uint32_t)chipid;
-    Serial.printf("mac=%04X%08X, size=%d; %d,...,%s,%s,%s,%s\n%d %s, %s, %s, %d\n%s\n%s\n", 
+    Serial.printf("mac=%04X%08X, size=%d; %d,...,%s,%s,%s,%s\n%s, %s, %s, %d\n%s\n%s\n", 
         id_high2, 
         id_low4,
         sizeof(Config), 
@@ -367,14 +367,13 @@ void dumpConfig(const Config* c) {
         c->hubId,
         c->wifiNetwork,
         c->wifiPassword,
-        //c->simpleMqtt,
         c->mqttUser,
         c->mqttPassword,
         c->mqttServer,
         c->mqttPort,
         c->thingCrt,
         c->thingPrivateKey
-        );        
+        );                
   }
 }
 #define EEPROM_SIZE sizeof(Config)
