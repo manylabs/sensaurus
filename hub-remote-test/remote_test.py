@@ -1,5 +1,7 @@
+#!/usr/bin/env python
 import paho.mqtt.client as paho
 import ssl
+import os
 import time
 import json
 import hjson
@@ -18,12 +20,21 @@ class Tester(object):
 
     # connect to the MQTT service (broker)
     def connect(self):
-        self.mqttc = paho.Client()
+        self.mqttc = paho.Client("remote_test-%d" % os.getpid())
         self.mqttc.on_connect = self.on_connect
         self.mqttc.on_message = self.on_message
-        self.mqttc.tls_set(self.config['ca_path'], certfile=self.config['cert_path'], keyfile=self.config['key_path'], 
-                      cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLSv1_2, ciphers=None)
-        self.mqttc.connect(self.config['host'], 8883, keepalive=60)
+        if not self.config.get('useMqtt'):
+            # use aws iot
+            self.mqttc.tls_set(self.config['ca_path'], certfile=self.config['cert_path'], keyfile=self.config['key_path'],
+                          cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLSv1_2, ciphers=None)
+            self.mqttc.connect(self.config['host'], 8883, keepalive=60)
+        else:
+            # use plain mqtt
+            mqttUser = self.config['mqttUser']
+            mqttPassword = self.config['mqttPassword']
+            self.mqttc.username_pw_set(mqttUser, mqttPassword)
+            self.mqttc.connect(self.config['mqttServer'], int(self.config['mqttPort']), keepalive=60)
+
         self.mqttc.loop_start()
         self.mqttc.subscribe('%s/hub/%s/status' % (self.config['owner_id'], self.config['hub_id']))
         self.mqttc.subscribe('%s/hub/%s/sensors' % (self.config['owner_id'], self.config['hub_id']))
@@ -41,7 +52,7 @@ class Tester(object):
                 print('**** wifi_network missing from status')
             if not 'host' in message:
                 print('**** host missing from status')
-            print('status:')
+            print("%s status:" % (time.asctime()))
             print(message)
         elif msg.topic.endswith('sensors'):
             message = json.loads(msg.payload)
@@ -53,10 +64,11 @@ class Tester(object):
                 if k != 'time':
                     parts.append(v)
             self.log_file.write(','.join(parts) + '\n')
-            print('received %d sensor values with timestamp %d' % (len(parts) - 1, message_time))
+            print('%s: received %d sensor values with timestamp %d' % \
+                (time.asctime(), len(parts) - 1, message_time))
         elif msg.topic.endswith('devices'):
             message = json.loads(msg.payload)
-            print('devices:')
+            print("%s devices:" % (time.asctime()))
             self.test_component_ids = []
             for device_id, device_info in message.items():
                 comp_types = []

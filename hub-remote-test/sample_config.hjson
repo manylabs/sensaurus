@@ -5,3 +5,8 @@ ca_path: cert/AmazonRootCA1.pem
 cert_path: cert/thing-certificate.pem.crt
 key_path: cert/thing-private.pem.key
 serial_port: /dev/ttyX
+useMqtt: false
+mqttServer: postman.cloudmqtt.com
+mqttPort: 13125
+mqttUser: someUser
+mqttPassword: somePassword
