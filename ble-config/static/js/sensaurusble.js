@@ -14,14 +14,26 @@ and
 
 */
 
-var BLE_SERVICE_UUID = '9ec18803-e34a-4882-b61d-864247da821d';
+// core service
+var BLE_SERVICE_UUID   = "9ec18803-e34a-4882-b61d-864247da821d";
+
+// characteristics for core service
 var WIFI_NETWORK_UUID  = "e2ccd120-412f-4a99-922b-aca100637e2a";
-var WIFI_PASSWORD_UUID  = "30db3cd0-8eb1-41ff-b56a-a2a818873c34";
-var OWNER_ID_UUID  = "af74141f-3c60-425a-9402-62ec79b58c1a";
-var HUB_ID_UUID  = "e4636699-367b-4838-a421-1904cf95f869";
-var HUB_CERT_UUID  = "d1c4d088-fd9c-4881-8fc2-656441fa2cf4";
-var HUB_KEY_UUID  = "f97fee16-f4c3-48ff-a315-38dc2b985770";
-var BLE_CMD_UUID  = "93311ce4-a1e4-11e9-a3dc-60f81dcdd3b6";
+var WIFI_PASSWORD_UUID = "30db3cd0-8eb1-41ff-b56a-a2a818873c34";
+var OWNER_ID_UUID      = "af74141f-3c60-425a-9402-62ec79b58c1a";
+var HUB_ID_UUID        = "e4636699-367b-4838-a421-1904cf95f869";
+var BLE_CMD_UUID       = "93311ce4-a1e4-11e9-a3dc-60f81dcdd3b6";
+
+// mqtt service
+var BLE_SERVICE_MQTT_UUID   = "9ec18803-e34b-4882-b61d-864247da821d";
+
+// characteristics for mqtt service
+var MQTT_USER_UUID     = "63f04721-b6b4-11e9-99fb-60f81dcdd3b6";
+var MQTT_PASSWORD_UUID = "6617bdbd-b6b4-11e9-b75b-60f81dcdd3b6";
+var MQTT_SERVER_UUID   = "6675cf75-b6b4-11e9-82af-60f81dcdd3b6";
+var MQTT_PORT_UUID     = "66ebed11-b6b4-11e9-b607-60f81dcdd3b6";
+var HUB_CERT_UUID      = "d1c4d088-fd9c-4881-8fc2-656441fa2cf4";
+var HUB_KEY_UUID       = "f97fee16-f4c3-48ff-a315-38dc2b985770";
 
 async function writeCharacteristicsInChunks(charUuid, value) {
   //let p0 = new Promise((resolve, reject) => {
@@ -54,7 +66,16 @@ async function writeChunkedCharacteristics() {
     await writeCharacteristicsInChunks(HUB_KEY_UUID, sensaurusBle.thingPrivateKey);
   }
 }
+//*******************************************************************
+// Utility functions
+//*******************************************************************
 
+function toBytesInt16 (num) {
+    arr = new ArrayBuffer(2); // an Int16 takes 2 bytes
+    view = new DataView(arr);
+    view.setUint16(0, num, false); // byteOffset = 0; litteEndian = false
+    return arr;
+}
 
 (function() {
   'use strict';
@@ -63,25 +84,12 @@ async function writeChunkedCharacteristics() {
   let encoder = new TextEncoder('utf-8');
   let decoder = new TextDecoder('utf-8');
 
-  // heart rate service: 180d
-  // 0000180d-0000-1000-8000-00805f9b34fb
-
-  // HR
-  // https://www.bluetooth.com/specifications/gatt/services/
-  // Heart Rate	org.bluetooth.service.heart_rate	0x180D
-
-  // see hub-esp32
+  // see hub-esp32 C code
   // Sensaurus
 
   // #define BLE_SERVICE_UUID "9ec18803-e34a-4882-b61d-864247da821d"
   // #define WIFI_NETWORK_UUID "e2ccd120-412f-4a99-922b-aca100637e2a"
-  // #define WIFI_PASSWORD_UUID "30db3cd0-8eb1-41ff-b56a-a2a818873c34"
-  // #define OWNER_ID_UUID "af74141f-3c60-425a-9402-62ec79b58c1a"
-  // #define HUB_ID_UUID "e4636699-367b-4838-a421-1904cf95f869"
-  // #define HUB_CERT_UUID "d1c4d088-fd9c-4881-8fc2-656441fa2cf4"
-  // #define HUB_KEY_UUID "f97fee16-f4c3-48ff-a315-38dc2b985770"
-
-  //var HPS_SERVICE_UUID = '9ec18803-e34a-4882-b61d-864247da821d';
+  // ...
 
   // set to false to minimize console.log printing
   var verbose = true;
@@ -101,7 +109,7 @@ async function writeChunkedCharacteristics() {
   }
 
   /**
-   *
+   * BLE client class for Sensaurus services.
   */
   class SensaurusBle {
 
@@ -115,28 +123,21 @@ async function writeChunkedCharacteristics() {
       this._connected = false;
     }
 
-    // TODO: finish reconnect implementation
-    // reconnect a previously connected/disconnected device
-    reconnect() {
-      if (!this.device) {
-        log("Can't reconnect device that was not previosly connected.");
-        return;
-      }
-      if (this._connected) {
-        log("Can't reconnect device that is already connected.");
-        return;
-      }
-      return this.device.gatt.connect()
-      .then( server => this._finalizeConnection(server));
-      //log("Reconnect: ret=", ret);
-      //return ret;
-    }
 
+
+    // finalize connection by setting object properties etc.
     _finalizeConnection(server) {
+      //this._characteristics = new Map();
       this._connected = true;
       log("_finalizeConnection: Calling getPrimaryService...")
       this.server = server;
-      console.log("deb3", server);
+      return this.getPrimaryService(server);
+    }
+
+
+
+    // gets services needed by this clients and caches characteristics
+    getPrimaryService(server) {
       return Promise.all([
         server.getPrimaryService(BLE_SERVICE_UUID).then(service => {
           //console.log("deb3a", service);
@@ -147,13 +148,30 @@ async function writeChunkedCharacteristics() {
             this._cacheCharacteristic(service, HUB_ID_UUID),
             this._cacheCharacteristic(service, BLE_CMD_UUID),
           ])
-        })
+        }),
+        server.getPrimaryService(BLE_SERVICE_MQTT_UUID).then(service => {
+          //console.log("deb3a", service);
+          return Promise.all([
+            this._cacheCharacteristic(service, MQTT_USER_UUID),
+            this._cacheCharacteristic(service, MQTT_PASSWORD_UUID),
+            this._cacheCharacteristic(service, MQTT_SERVER_UUID),
+            this._cacheCharacteristic(service, MQTT_PORT_UUID),
+            this._cacheCharacteristic(service, HUB_CERT_UUID),
+            this._cacheCharacteristic(service, HUB_KEY_UUID),
+          ])
+        }),
+
       ]);
     }
 
+    //*******************************************************************
+    // Manylabs Sensaurus BLE Service high level access functions
+    //*******************************************************************
 
+    // Performs overall connect, including requestDevice, getPrimaryService
     connect(disconnectListener) {
-      return navigator.bluetooth.requestDevice({filters:[{services:[ BLE_SERVICE_UUID ]}]})
+      //return navigator.bluetooth.requestDevice({filters:[{services:[ BLE_SERVICE_UUID, BLE_SERVICE_MQTT_UUID ]}]})
+      return navigator.bluetooth.requestDevice({filters:[{services:[ BLE_SERVICE_UUID ]}], optionalServices:[BLE_SERVICE_MQTT_UUID]})
       .then(device => {
         // remove event listener if this instance was connected before
         if (this.device) {
@@ -166,34 +184,30 @@ async function writeChunkedCharacteristics() {
       })
       .then(server => {
         this._connected = true;
-        log("Calling getPrimaryService...")
         this.server = server;
-        //console.log("getPrimaryService: ", server);
-        return Promise.all([
-          server.getPrimaryService(BLE_SERVICE_UUID).then(service => {
-            //console.log("deb3a", service);
-            return Promise.all([
-              this._cacheCharacteristic(service, WIFI_NETWORK_UUID),
-              this._cacheCharacteristic(service, WIFI_PASSWORD_UUID),
-              this._cacheCharacteristic(service, OWNER_ID_UUID),
-              this._cacheCharacteristic(service, HUB_ID_UUID),
-              this._cacheCharacteristic(service, HUB_CERT_UUID),
-              this._cacheCharacteristic(service, HUB_KEY_UUID),
-              this._cacheCharacteristic(service, BLE_CMD_UUID),
-            ])
-          })
-        ]);
+        log("connect: Calling getPrimaryService...")
+        return this.getPrimaryService(server);
       })
     }
 
-    //*******************************************************************
-    // Manylabs Sensaurus BLE Service high level access functions
-    //*******************************************************************
+    // Reconnect a previously connected/disconnected device, without
+    //  the need to perform requestDevice.
+    reconnect() {
+      if (!this.device) {
+        log("Can't reconnect device that was not previosly connected.");
+        return;
+      }
+      if (this._connected) {
+        log("Can't reconnect device that is already connected.");
+        return;
+      }
+      return this.device.gatt.connect()
+      .then( server => this._finalizeConnection(server));
+    }
 
     // Get all read characteristics
     getAllCharacteristicValues() {
       console.log("getAllCharacteristicValues");
-
       /* this works on Chrome MACOSX, not on Chrome Android  */
       const p = new Promise((resolve, reject) => {
         this._readCharacteristicValue(WIFI_NETWORK_UUID)
@@ -211,8 +225,37 @@ async function writeChunkedCharacteristics() {
               this._readCharacteristicValue(HUB_ID_UUID)
               .then( value => {
                 this.hubId = decoder.decode(value);
-                //console.log("getAllCharacteristicValues.4", this.hubId);
-                resolve("done");
+                this._readCharacteristicValue(MQTT_USER_UUID)
+                .then(value => {
+                  this.mqttUser = decoder.decode(value);
+                  this._readCharacteristicValue(MQTT_PASSWORD_UUID)
+                  .then(value => {
+                    this.mqttPassword = decoder.decode(value);
+                    this._readCharacteristicValue(MQTT_SERVER_UUID)
+                    .then(value => {
+                      this.mqttServer = decoder.decode(value);
+                      //resolve("done");
+                      this._readCharacteristicValue(MQTT_PORT_UUID)
+                      .then(value => {
+
+                        // value.getUint16(): 17715
+                        //   vs. Int16Array(value.buffer)[0] 13125
+                        //this.mqttPort = value.getUint16();
+                        // Int16Array works as a work-around and returns the correct value
+                        // it's because of the endian:
+                        //    getUint16 is using Big Endian
+                        //    Int16Array is using Little Endian
+                        // 51*256+69
+                        // = 13125
+                        // 51+69*256
+                        // = 17715
+
+                        this.mqttPort = new Int16Array(value.buffer)[0];
+                        resolve("done");
+                      });
+                    });
+                  });
+                });
               });
             });
           });
@@ -221,7 +264,8 @@ async function writeChunkedCharacteristics() {
       return p;
 
 
-      /* this works on Chrome MACOSX, not on Chrome Android  */
+      // this parallel call works on Chrome MACOSX, not on Chrome Android
+      // therefore using the serialized code above.
       /*
       return Promise.all([
         this._readCharacteristicValue(WIFI_NETWORK_UUID),
@@ -240,21 +284,13 @@ async function writeChunkedCharacteristics() {
       });
       */
 
-      /*
-      return this._readCharacteristicValue(WIFI_NETWORK_UUID)
-      .then(value => {
-        //var value = value.buffer ? value : new DataView(value);
-        var decoded = decoder.decode(value);
-        log("getAllCharacteristicValues: " + decoded);
-      });
-      */
-
     }
 
     // Save all characteristics
     saveSettings() {
       var pw = '*'.repeat(this.wifiPassword.length);
       console.log("saveSettings values=", this.wifiNetwork, pw, this.ownerId, this.hubId);
+      // promise to save core service characteristics
       const p0 = new Promise((resolve, reject) => {
         var p = this._writeCharacteristicValue(WIFI_NETWORK_UUID, this._encodeString(this.wifiNetwork));
         p.then(() => {
@@ -270,7 +306,7 @@ async function writeChunkedCharacteristics() {
                   resolve();
                 })
                 .catch(error => {
-                  console.log("saveSettings failed: ", error);
+                  console.log("saveSettings failed saving core service characteristics: ", error);
                   reject(error);
                 });
               });
@@ -278,7 +314,40 @@ async function writeChunkedCharacteristics() {
           });
         });
       });
-      return p0;
+      // promise to save mqtt service characteristics
+
+      const pret = new Promise((resolve, reject) => {
+        p0.then(() => {
+          this._writeCharacteristicValue(MQTT_USER_UUID, this._encodeString(this.mqttUser))
+          .then(() => {
+            this._writeCharacteristicValue(MQTT_PASSWORD_UUID, this._encodeString(this.mqttPassword))
+            .then(() => {
+              this._writeCharacteristicValue(MQTT_SERVER_UUID, this._encodeString(this.mqttServer))
+              .then(() => {
+                var val = toBytesInt16(this.mqttPort);
+                this._writeCharacteristicValue(MQTT_PORT_UUID, val)
+                .then(() => {
+                  writeChunkedCharacteristics()
+                  .then(() => {
+                    console.log("saveSettings done writeChunkedCharacteristics");
+                    resolve();
+                  });
+                  //.catch(error => {
+                  //  console.log("saveSettings failed: ", error);
+                  //  reject(error);
+                  //});
+                });
+              });
+            });
+          })
+          .catch(error => {
+            console.log("saveSettings failed saving mqtt service characteristics: ", error);
+            reject(error);
+          });
+        });
+      });
+
+      return pret;
     }
 
     // Send command (write command characteristic)

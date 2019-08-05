@@ -10,12 +10,17 @@ static unsigned int constexpr RESPONSE_TIMEOUT = 50;  // msec
 static bool constexpr ENABLE_CONSOLE = 1;
 static bool constexpr ENABLE_WIFI = 0;
 
-// Vanilla MQTT configuration
+// if true, use simple MQTT instead of AWS IOT MQTT
+//   but for now, this is given by compilation flag
+//static const bool SIMPLE_MQTT = true;
 
+// simple/Vanilla MQTT configuration
+
+// flag
 static const char* MQTT_USER     = "mqttuser";
 static const char* MQTT_PASSWORD = "mqttpw";
-static const unsigned int MQTT_PORT = 1883;
 static const char* MQTT_SERVER   = "mqttserver";
+static const unsigned int MQTT_PORT = 1883;
  
 
 

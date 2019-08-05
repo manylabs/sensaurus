@@ -1,20 +1,10 @@
-// uncomment to allow BLE to be operational
-#define ENABLE_BLE
-// uncomment to allow aws iot connections
-//#define ENABLE_AWS_IOT
-// only one of ENABLE_AWS_IOT and ENABLE_MQTT must be defined
-#define ENABLE_MQTT
-
-
 #include <EEPROM.h>
 #include <ArduinoOTA.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include "AWS_IOT.h"
-#ifdef ENABLE_MQTT
-// set this in PubSubClienht.h: #define MQTT_KEEPALIVE 60
+// set this in PubSubClient.h: #define MQTT_KEEPALIVE 60
 #include "PubSubClient.h"
-#endif
 #include "jled.h"
 #include "WiFi.h"
 #include "NTPClient.h"
@@ -26,6 +16,8 @@
 #include "SensaurDevice.h"
 #include "settings.h"
 
+// set this to INFO OR WARN for production, VERBOSE for debugging
+#define RUNTIME_LOG_LOCAL_LEVEL ESP_LOG_INFO
 // set to verbose to get more information from components during debugging
 // enable esp_log_level_set("*", ESP_LOG_VERBOSE); in setup() and CONFIG_LOG_DEFAULT_LEVEL
 
@@ -44,9 +36,12 @@
 
 // firmware version for this application: EEPROM will be erased and configuration needed
 //  if version is incremented
-#define FIRMWARE_VERSION 2  
+#define FIRMWARE_VERSION 3
 #define MAX_DEVICE_COUNT 6
-#define CONSOLE_BAUD 9600
+//peters
+//#define CONSOLE_BAUD 9600
+// peterm
+#define CONSOLE_BAUD 115200
 #define DEV_BAUD 38400
 #define SERIAL_BUFFER_SIZE 120
 #define DISCONNECT_INTERVAL 10000
@@ -62,10 +57,16 @@
 // app1,     app,  ota_1,   0x1E0000,0x1D0000,
 // spiffs,   data, spiffs,  0x3B0000,0x50000,
 
-// uncomment to allow BLE to be operational
+// uncomment to enable BLE
 #define ENABLE_BLE
+// only one of ENABLE_AWS_IOT and ENABLE_MQTT must be defined
+// uncomment to enable simple/vanilla mqtt instead of AWS IOT MQTT 
+#define ENABLE_MQTT
 // uncomment to allow aws iot connections
 //#define ENABLE_AWS_IOT
+// uncomment to allow BLE to be operational
+#define ENABLE_BLE
+// uncomment to enabled OTA
 #define ENABLE_OTA
 
 // used for ESP32 logging
@@ -111,8 +112,16 @@ static bool dirty = false;
 #define HUB_CERT_UUID "d1c4d088-fd9c-4881-8fc2-656441fa2cf4"
 #define HUB_KEY_UUID "f97fee16-f4c3-48ff-a315-38dc2b985770"
 #define BLE_CMD_UUID "93311ce4-a1e4-11e9-a3dc-60f81dcdd3b6"
+#define MQTT_USER_UUID      "63f04721-b6b4-11e9-99fb-60f81dcdd3b6"
+#define MQTT_PASSWORD_UUID  "6617bdbd-b6b4-11e9-b75b-60f81dcdd3b6"
+#define MQTT_SERVER_UUID    "6675cf75-b6b4-11e9-82af-60f81dcdd3b6"
+#define MQTT_PORT_UUID      "66ebed11-b6b4-11e9-b607-60f81dcdd3b6"
+
+#define BLE_SERVICE_MQTT_UUID "9ec18803-e34b-4882-b61d-864247da821d"
+
 #define BLE_CMD_BLE_EXIT "bleExit"
 #define BLE_CMD_BLE_START "bleStart"
+
 
 // configuration storage (will be in EEPROM)
 struct Config {
@@ -124,6 +133,15 @@ struct Config {
   int responseTimeout;
   char ownerId[64];
   char hubId[64];
+  // if true, use simple MQTT instead of AWS IOT MQTT
+  //   but for now, this is given by compilation flag
+  //bool simpleMqtt;
+  // simple/Vanilla MQTT info
+  char mqttServer[128];
+  unsigned int mqttPort;
+  char mqttUser[64];
+  char mqttPassword[64];
+  // AWS IOT cert/key
   char thingCrt[1500];
   char thingPrivateKey[2000];
 } config;
@@ -151,6 +169,21 @@ void displayFreeHeap(const char* title) {
   Serial.printf("Min Free Heap: %d\n", heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
   Serial.printf("Max Alloc Heap: %d\n", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 #endif  
+}
+
+// *******************
+// Utility functions * 
+// *******************
+
+// Convert incoming BLE array to uint16
+uint16_t arrToUint16(uint8_t* arr) {
+    // decode the two bytes as little endian
+    uint16_t value = (*arr)*256;
+    //ESP_LOGD(TAG,  "arrToUint16: valueData[0]=%d", *arr);      
+    arr++;
+    //ESP_LOGD(TAG,  "arrToUint16: valueData[1]=%d", *arr);      
+    value += *arr;
+    return value;
 }
 
 
@@ -187,7 +220,7 @@ bool mqttReconnect() {
     //clientId += String(random(0xffff), HEX);
     clientId += String(config.hubId);
     // Attempt to connect
-    if (mqttClient.connect(clientId.c_str(),MQTT_USER,MQTT_PASSWORD)) {
+    if (mqttClient.connect(clientId.c_str(),config.mqttUser, config.mqttPassword)) {
       Serial.println("connected");
       // prep topic names
       String topicName = String(config.ownerId) + "/hub/" + config.hubId + "/command";
@@ -325,7 +358,7 @@ void dumpConfig(const Config* c) {
     uint64_t chipid = ESP.getEfuseMac();
     uint16_t id_high2 = (uint16_t)(chipid>>32);
     uint32_t id_low4 = (uint32_t)chipid;
-    ESP_LOGV(TAG, "mac=%04X%08X, size=%d; %d,...,%s,%s,%s,%s\n%s\n%s\n", 
+    Serial.printf("mac=%04X%08X, size=%d; %d,...,%s,%s,%s,%s\n%d %s, %s, %s, %d\n%s\n%s\n", 
         id_high2, 
         id_low4,
         sizeof(Config), 
@@ -334,9 +367,14 @@ void dumpConfig(const Config* c) {
         c->hubId,
         c->wifiNetwork,
         c->wifiPassword,
+        //c->simpleMqtt,
+        c->mqttUser,
+        c->mqttPassword,
+        c->mqttServer,
+        c->mqttPort,
         c->thingCrt,
         c->thingPrivateKey
-        );
+        );        
   }
 }
 #define EEPROM_SIZE sizeof(Config)
@@ -501,7 +539,7 @@ void setup() {
   }
   
 #elif defined(ENABLE_MQTT)
-  mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+  mqttClient.setServer(config.mqttServer, config.mqttPort);
   mqttClient.setCallback(mqttMessageHandler);
   
   bool rc = mqttReconnect();
@@ -511,10 +549,11 @@ void setup() {
   
   
   if (!awsIotConnected) {
+  // if AWS IOT is not connected, we have enough memory to run BLE
   // we could use pubsubEnabled instead of awsIotConnected if we wanted to disabled  BLE
   //  when both aws iot and simple mqtt are up.
   //if (!pubsubEnabled) {
-    Serial.println("AWS IOT/MQTT not connected: switching to BLE mode.");
+    Serial.println("Enabling BLE.");
     bleMode++;
   }
 #ifdef ENABLE_BLE
@@ -1007,7 +1046,7 @@ int hubPublish(const char* topic, const char* message) {
         //  less error prone
         goto do_return;
       }
-      ESP_LOGD(TAG, "mqttClient.write: wrote %d bytes from offset %d\n", toSend, offset);    
+      //ESP_LOGD(TAG, "mqttClient.write: wrote %d bytes from offset %d\n", toSend, offset);    
       remainingLength -= toSend;      
     } 
     rc = mqttClient.endPublish();
@@ -1135,7 +1174,9 @@ void initConfig() {
   // load configuration from EEPROM if available
   EEPROM.get(0, config);
   Serial.println("config loaded from flash memory:");
-  dumpConfig(&config);        
+  if (RUNTIME_LOG_LOCAL_LEVEL >= ESP_LOG_VERBOSE) {
+    dumpConfig(&config);    
+  }
 
   if (config.version != FIRMWARE_VERSION || config.version == 0) {
     if (config.version) {
@@ -1151,6 +1192,11 @@ void initConfig() {
     strncpy(config.hubId, HUB_ID, 64);
     strncpy(config.wifiNetwork, WIFI_SSID, sizeof(config.wifiNetwork)-1);
     strncpy(config.wifiPassword, WIFI_PASSWORD, sizeof(config.wifiPassword)-1);
+    //config.simpleMqtt = SIMPLE_MQTT;    
+    strncpy(config.mqttUser, MQTT_USER, sizeof(config.mqttUser)-1);
+    strncpy(config.mqttPassword, MQTT_PASSWORD, sizeof(config.mqttPassword)-1);
+    strncpy(config.mqttServer, MQTT_SERVER, sizeof(config.mqttServer)-1);
+    config.mqttPort = MQTT_PORT;    
     strncpy(config.thingCrt, certificate_pem_crt, sizeof(config.thingCrt)-1);
     strncpy(config.thingPrivateKey, private_pem_key, sizeof(config.thingPrivateKey)-1);
   } else {
@@ -1255,6 +1301,51 @@ class HubIdCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
+class MqttUserCallbacks: public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *characteristic) {
+    std::string value = characteristic->getValue();
+    if (strcmp(config.mqttUser, value.c_str())) {
+      dirty = true;
+      strncpy(config.mqttUser, value.c_str(), sizeof(config.mqttUser));
+    }
+    ESP_LOGI(TAG,  "%s", config.mqttUser);      
+  }
+};
+
+class MqttPasswordCallbacks: public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *characteristic) {
+    std::string value = characteristic->getValue();
+    if (strcmp(config.mqttPassword, value.c_str())) {
+      dirty = true;
+      strncpy(config.mqttPassword, value.c_str(), sizeof(config.mqttPassword));
+    }
+    ESP_LOGI(TAG,  "%s", config.mqttPassword);      
+  }
+};
+
+class MqttServerCallbacks: public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *characteristic) {
+    std::string value = characteristic->getValue();
+    if (strcmp(config.mqttServer, value.c_str())) {
+      dirty = true;
+      ESP_LOGD(TAG,  "MqttServerCallbacks modifed %s->%s", config.mqttServer, value.c_str());      
+      strncpy(config.mqttServer, value.c_str(), sizeof(config.mqttServer));
+    }
+    ESP_LOGI(TAG,  "MqttServerCallbacks: %s", config.mqttServer);      
+  }
+};
+
+class MqttPortCallbacks: public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *characteristic) {
+    uint16_t value = arrToUint16(characteristic->getData());
+    if (config.mqttPort != value) {
+      dirty = true;
+      config.mqttPort = value;
+    }
+    ESP_LOGI(TAG,  "MqttPortCallbacks.onWrite: %d", config.mqttPort);      
+  }
+};
+
 class CmdCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *characteristic) {
     std::string value = characteristic->getValue();
@@ -1264,8 +1355,10 @@ class CmdCallbacks : public BLECharacteristicCallbacks {
       if (dirty) {
         EEPROM.put(0, config);
         EEPROM.commit();
-        ESP_LOGI(TAG, "config saved in flash memory:");
-        dumpConfig(&config);
+        ESP_LOGI(TAG, "config saved in flash memory:");        
+        if (RUNTIME_LOG_LOCAL_LEVEL >= ESP_LOG_VERBOSE) {
+          dumpConfig(&config);
+        }
       } else {
         Serial.println("config save skipped - nothing modified");
       }
@@ -1320,13 +1413,19 @@ class HubKeyCallbacks : public BLECharacteristicCallbacks {
 
 
 void startBLE() {
-  
-  BLEDevice::init("Sensaurus");
-  BLEServer *server = BLEDevice::createServer();
-  BLEService *service = server->createService(BLE_SERVICE_UUID);
 
+  String bleName = "Sensaurus-";
+  bleName += config.hubId;
+  BLEDevice::init(bleName.c_str());
+  BLEServer *server = BLEDevice::createServer();
+  BLECharacteristic *characteristic;
+  
+  // create and start core service and characteristics
+  BLEService *service = server->createService(BLE_SERVICE_UUID);
+  
+  
   // add characteristics
-  BLECharacteristic *characteristic = service->createCharacteristic(WIFI_NETWORK_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
+  characteristic = service->createCharacteristic(WIFI_NETWORK_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
   characteristic->setCallbacks(new WifiNetworkCallbacks());
   characteristic->setValue(config.wifiNetwork);
   characteristic = service->createCharacteristic(WIFI_PASSWORD_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
@@ -1337,26 +1436,46 @@ void startBLE() {
   characteristic->setValue(config.ownerId);
   characteristic = service->createCharacteristic(HUB_ID_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
   characteristic->setCallbacks(new HubIdCallbacks());
-  characteristic->setValue(config.hubId);
-  characteristic = service->createCharacteristic(HUB_CERT_UUID, BLECharacteristic::PROPERTY_WRITE);
-  characteristic->setCallbacks(new HubCertCallbacks());
-  characteristic = service->createCharacteristic(HUB_KEY_UUID, BLECharacteristic::PROPERTY_WRITE);
-  characteristic->setCallbacks(new HubKeyCallbacks());
-
+  characteristic->setValue(config.hubId);  
   characteristic = service->createCharacteristic(BLE_CMD_UUID, BLECharacteristic::PROPERTY_WRITE);
   characteristic->setCallbacks(new CmdCallbacks());
+
   
   service->start();
+
+  // create and start mqtt service and characteristics  
+  BLEService *service2 = server->createService(BLE_SERVICE_MQTT_UUID);
+  
+  characteristic = service2->createCharacteristic(MQTT_USER_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
+  characteristic->setCallbacks(new MqttUserCallbacks());
+  characteristic->setValue(config.mqttUser);
+  characteristic = service2->createCharacteristic(MQTT_PASSWORD_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
+  characteristic->setCallbacks(new MqttPasswordCallbacks());
+  characteristic->setValue(config.mqttPassword);
+  characteristic = service2->createCharacteristic(MQTT_SERVER_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
+  characteristic->setCallbacks(new MqttServerCallbacks());
+  characteristic->setValue(config.mqttServer);
+  characteristic = service2->createCharacteristic(MQTT_PORT_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
+  characteristic->setCallbacks(new MqttPortCallbacks());
+  characteristic->setValue(config.mqttPort);  
+  characteristic = service2->createCharacteristic(HUB_CERT_UUID, BLECharacteristic::PROPERTY_WRITE);
+  characteristic->setCallbacks(new HubCertCallbacks());
+  characteristic = service2->createCharacteristic(HUB_KEY_UUID, BLECharacteristic::PROPERTY_WRITE);
+  characteristic->setCallbacks(new HubKeyCallbacks());
+  
+  service2->start();
+
+  
   BLEAdvertising *advertising = server->getAdvertising();
   
   advertising->addServiceUUID(BLE_SERVICE_UUID);
+  advertising->addServiceUUID(BLE_SERVICE_MQTT_UUID);
   advertising->setScanResponse(true);
   advertising->setMinPreferred(0x06);  // functions that help with iPhone connections issue
   advertising->setMinPreferred(0x12);
-  //BLEDevice::startAdvertising();
   advertising->start();
   
-  ESP_LOGD(TAG, "startBLE: Started advertising");
+  ESP_LOGI(TAG, "startBLE: Started advertising for %s", bleName.c_str());
   
 }
 
