@@ -44,8 +44,6 @@
 #define CONSOLE_BAUD 115200
 #define DEV_BAUD 38400
 #define SERIAL_BUFFER_SIZE 120
-#define DISCONNECT_INTERVAL 10000
-#define LED_OFF_INTERVAL 2000
 
 // Note: for BLE to build, maximum_size specified in boards.txt needs to be adjusted from 1310720 to:
 // node32smax.upload.maximum_size=1900544
@@ -425,6 +423,7 @@ WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP);
 unsigned long lastEpochSeconds = 0;  // seconds since epoch start (from NTP)
 unsigned long lastTimeUpdate = 0;  // msec since boot
+unsigned long lastMemoryDisplay = 0;
 
 
 // run once on startup
@@ -495,7 +494,6 @@ void setup() {
   } else {
     Serial.println("wifiEnabled is false: not connected to wifi.");    
   }
-
   
   setStatusLED(HIGH);
 
@@ -578,15 +576,12 @@ void setup() {
     }
 #endif
   }
-  
-  
 
   if (status == WL_CONNECTED) {
     // send current status
     sendStatus();
   }
   Serial.println("ready");
-
 }
 
 
@@ -682,6 +677,14 @@ void loop() {
   }
   if (configMode) {
     ledcWrite(0, (millis() >> 3) & 255);  // fade LED when in config mode
+  }
+
+  // display memory usage
+  if (config.consoleEnabled) {
+    if (time - lastMemoryDisplay > 5 * 60 * 1000) {
+      displayFreeHeap("loop");
+      lastMemoryDisplay = time;
+    }
   }
 
   // get network time once an hour
