@@ -39,15 +39,15 @@
 #define FIRMWARE_VERSION 3
 #define MAX_DEVICE_COUNT 6
 //peters
-//#define CONSOLE_BAUD 9600
+#define CONSOLE_BAUD 9600
 // peterm
-#define CONSOLE_BAUD 115200
+//#define CONSOLE_BAUD 115200
 #define DEV_BAUD 38400
 #define SERIAL_BUFFER_SIZE 120
 
 // Note: for BLE to build, maximum_size specified in boards.txt needs to be adjusted from 1310720 to:
 // node32smax.upload.maximum_size=1900544
-// and partition has be be adjusted, e.g. like this:
+// and the partition has to be adjusted, e.g. like this:
 // # Name,   Type, SubType, Offset,  Size, Flags
 // nvs,      data, nvs,     0x9000,  0x5000,
 // otadata,  data, ota,     0xe000,  0x2000,
@@ -56,14 +56,12 @@
 // spiffs,   data, spiffs,  0x3B0000,0x50000,
 
 // uncomment to enable BLE
-#define ENABLE_BLE
+//#define ENABLE_BLE
 // only one of ENABLE_AWS_IOT and ENABLE_MQTT must be defined
 // uncomment to enable simple/vanilla mqtt instead of AWS IOT MQTT 
-#define ENABLE_MQTT
+//#define ENABLE_MQTT
 // uncomment to allow aws iot connections
-//#define ENABLE_AWS_IOT
-// uncomment to allow BLE to be operational
-#define ENABLE_BLE
+#define ENABLE_AWS_IOT
 // uncomment to enabled OTA
 #define ENABLE_OTA
 
