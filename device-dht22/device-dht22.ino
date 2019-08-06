@@ -34,7 +34,7 @@ unsigned long deviceId = 0;
 DHT dht(DHT_PIN, DHT22);
 float temperature = 0;
 float humidity = 0;
-unsigned long lastSensorReadTime = 0;
+bool valid = false;
 
 
 void setup() {
@@ -50,18 +50,8 @@ void setup() {
 
 
 void loop() {
-
-  // handle communication
   while (hubStream.available()) {
     processIncomingByte(hubStream.read());
-  }
-
-  // read sensor
-  unsigned long time = millis();
-  if (time - lastSensorReadTime > 1000) {
-    temperature = dht.readTemperature();
-    humidity = dht.readHumidity();
-    lastSensorReadTime = time;
   }
 }
 
@@ -91,6 +81,11 @@ void processMessage(char *cmd, char *args[], int argCount) {
 
   // query current values
   if (strcmp(cmd, "v") == 0) {
+    if (valid == false) {  // normally we read after a request, but the first time we should read before the request
+      temperature = dht.readTemperature();
+      humidity = dht.readHumidity();
+      valid = true;
+    }
     digitalWrite(ARD_LED_PIN, HIGH);
     hubStream.print("v:");
     hubStream.print(temperature);
@@ -99,6 +94,8 @@ void processMessage(char *cmd, char *args[], int argCount) {
     hubStream.println();
     delay(20);
     digitalWrite(ARD_LED_PIN, LOW);
+    temperature = dht.readTemperature();  // read after the request; we don't want to interfere with the polling by reading independently
+    humidity = dht.readHumidity();
 
   // set values
   } else if (strcmp(cmd, "s") == 0 && argCount >= 1) {

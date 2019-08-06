@@ -28,8 +28,8 @@ byte messageIndex = 0;
 
 // other globals
 unsigned long deviceId = 0;
-unsigned long lastSensorReadTime = 0;
 int co2;  // PPM
+bool valid = false;
 
 
 void setup() {
@@ -52,16 +52,6 @@ void loop() {
   }
   while (Serial.available()) {
     processIncomingByte(Serial.read());
-  }
-
-  // read sensor
-  unsigned long time = millis();
-  if (time - lastSensorReadTime > 1000) {
-    int v = readCO2();
-    if (v > 0) {
-      co2 = v;
-    }
-    lastSensorReadTime = time;
   }
 }
 
@@ -91,12 +81,17 @@ void processMessage(char *cmd, char *args[], int argCount) {
 
   // query current values
   if (strcmp(cmd, "v") == 0) {
+    if (valid == false) {  // normally we read after a request, but the first time we should read before the request
+      readSensor();
+      valid = true;
+    }
     digitalWrite(ARD_LED_PIN, HIGH);
     hubStream.print("v:");
     hubStream.print(co2);
     hubStream.println();
     delay(20);
     digitalWrite(ARD_LED_PIN, LOW);
+    readSensor();
 
   // set values
   } else if (strcmp(cmd, "s") == 0 && argCount >= 1) {
@@ -128,6 +123,14 @@ void processMessage(char *cmd, char *args[], int argCount) {
   }
 }
 
+
+void readSensor() {
+  int v = readCO2();
+  if (v > 0) {
+    co2 = v;
+  }
+  valid = true; 
+}
 
 // read currently connected CO2 sensor via I2C; this will return 0 or -1 on read error
 // based on code from co2meter.com

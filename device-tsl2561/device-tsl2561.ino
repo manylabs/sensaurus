@@ -29,9 +29,8 @@ byte messageIndex = 0;
 // other globals
 unsigned long deviceId = 0;
 TSL2561 tsl(TSL2561_ADDR_FLOAT);
-unsigned long lastSensorReadTime = 0;
 int lux;  // PPM
-
+bool valid = false;
 
 void setup() {
   Serial.begin(9600);
@@ -49,24 +48,9 @@ void setup() {
 
 
 void loop() {
-
-  // handle communication
   while (hubStream.available()) {
     processIncomingByte(hubStream.read());
   }
-  while (Serial.available()) {
-    processIncomingByte(Serial.read());
-  }
-
-  // read sensor
-  unsigned long time = millis();
-  if (time - lastSensorReadTime > 1000) {
-    uint32_t lum = tsl.getFullLuminosity();
-    uint16_t ir = lum >> 16;
-    uint16_t full = lum & 0xFFFF;
-    lux = tsl.calculateLux(full, ir);
-    lastSensorReadTime = time;
-    }
 }
 
 
@@ -96,12 +80,16 @@ void processMessage(char *cmd, char *args[], int argCount) {
 
   // query current values
   if (strcmp(cmd, "v") == 0) {
+    if (valid == false) {
+      readSensor();
+    }
     digitalWrite(ARD_LED_PIN, HIGH);
     hubStream.print("v:");
     hubStream.print(lux);
     hubStream.println();
     delay(20);
     digitalWrite(ARD_LED_PIN, LOW);
+    readSensor();
 
   // set values
   } else if (strcmp(cmd, "s") == 0 && argCount >= 1) {
@@ -131,5 +119,14 @@ void processMessage(char *cmd, char *args[], int argCount) {
     }
     hubStream.println();
   }
+}
+
+
+void readSensor() {
+  uint32_t lum = tsl.getFullLuminosity();
+  uint16_t ir = lum >> 16;
+  uint16_t full = lum & 0xFFFF;
+  lux = tsl.calculateLux(full, ir);
+  valid = true;
 }
 
