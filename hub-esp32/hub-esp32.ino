@@ -4,7 +4,7 @@
 #include <BLEServer.h>
 #include "AWS_IOT.h"
 // set this in PubSubClient.h: #define MQTT_KEEPALIVE 60
-#include "PubSubClient.h"
+// #include "PubSubClient.h"
 #include "jled.h"
 #include "WiFi.h"
 #include "NTPClient.h"
@@ -754,10 +754,11 @@ void waitForResponse(int deviceIndex) {
 
   // copy into our internal buffer and process message
   deviceMessageIndex = 0;
+  bool processed = false;
   while (devStream[deviceIndex].available()) {
     char c = devStream[deviceIndex].read();
     if (c == 10 || c == 13) {
-      if (deviceMessageIndex) {  // don't send empty messages
+      if (deviceMessageIndex) {  // don't process empty messages
         deviceMessage[deviceMessageIndex] = 0;
         Device &d = devices[deviceIndex];
         if (d.connected() == false) {
@@ -766,6 +767,7 @@ void waitForResponse(int deviceIndex) {
           d.resetComponents();  // clear out all the components until we get a meta-data message
         }
         processMessageFromDevice(deviceIndex);
+        processed = true;
         break;
       }
     } else {
@@ -775,6 +777,11 @@ void waitForResponse(int deviceIndex) {
       }
     }
   }
+
+  // log messages that have data but were not processed because of lack of EOL
+  if (config.consoleEnabled && processed == false && deviceMessageIndex > 0) {
+    Serial.printf("%d no eol: %s\n", deviceIndex + 1, deviceMessage);
+  } 
 
   // if we didn't get any bytes from the device, it may be disconnected
   if (deviceMessageIndex) {
@@ -789,7 +796,7 @@ void processMessageFromDevice(int deviceIndex) {
 
   // if enabled, echo the message to the USB serial console
   if (config.consoleEnabled) {
-    Serial.print(deviceIndex);
+    Serial.print(deviceIndex + 1);  // display plug number not device index
     Serial.print('>');
     Serial.println(deviceMessage);
   }
