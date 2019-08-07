@@ -3,8 +3,7 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include "AWS_IOT.h"
-// set this in PubSubClient.h: #define MQTT_KEEPALIVE 60
-// #include "PubSubClient.h"
+#include "PubSubClient.h"
 #include "jled.h"
 #include "WiFi.h"
 #include "NTPClient.h"
@@ -37,11 +36,13 @@
 // firmware version for this application: EEPROM will be erased and configuration needed
 //  if version is incremented
 #define FIRMWARE_VERSION 3
+// Use for internal testing when changing version often for different experiments
+#define FIRMWARE_VERSION_MINOR 6
 #define MAX_DEVICE_COUNT 6
 //peters
-#define CONSOLE_BAUD 9600
+//#define CONSOLE_BAUD 9600
 // peterm
-//#define CONSOLE_BAUD 115200
+#define CONSOLE_BAUD 9600
 #define DEV_BAUD 38400
 #define SERIAL_BUFFER_SIZE 120
 
@@ -55,8 +56,11 @@
 // app1,     app,  ota_1,   0x1E0000,0x1D0000,
 // spiffs,   data, spiffs,  0x3B0000,0x50000,
 
+// peters: preferred default config:
+// undef BLE, MQTT, def OTA, AWS_IOT
 // uncomment to enable BLE
 //#define ENABLE_BLE
+
 // only one of ENABLE_AWS_IOT and ENABLE_MQTT must be defined
 // uncomment to enable simple/vanilla mqtt instead of AWS IOT MQTT 
 //#define ENABLE_MQTT
@@ -195,7 +199,7 @@ PubSubClient mqttClient(wifiClient);
 // last time mqtt reconnect was attempted, in millis
 static long lastMqttConnectionAttempt = 0;
 // interval at which mqtt reconnect can be attempted, in millis
-static const int mqttReconnectInterval = 60000;
+static const int mqttReconnectInterval = 20000;
 /**
  * Connect or reconnect to MQTT server and re-subscribe.
  * Returns: true if success, false otherwise.
@@ -287,6 +291,9 @@ void WiFiEvent(WiFiEvent_t event)
     Serial.print("AP IPv6: ");
     Serial.println(WiFi.softAPIPv6());
     break;
+  case SYSTEM_EVENT_STA_LOST_IP:
+    ESP_LOGD(TAG, "WiFiEvent: %s", "SYSTEM_EVENT_STA_LOST_IP");
+    break;    
   case SYSTEM_EVENT_STA_GOT_IP:
     ESP_LOGD(TAG, "WiFiEvent: %s", "SYSTEM_EVENT_STA_GOT_IP");
     Serial.println("IP address: ");
@@ -430,6 +437,7 @@ void setup() {
   // uncomment this line to get more information from components during debugging
   // Use ESP_LOG_WARN, ESP_LOG_INFO, ESP_LOG_DEBUG, ESP_LOG_VERBOSE to get less or more verbosity
   // A good value for production release is ESP_LOG_WARN or ESP_LOG_INFO
+  // peters: set to WARN/INFO for production
   esp_log_level_set("*", ESP_LOG_WARN);
   esp_log_level_set(TAG, ESP_LOG_INFO);
   
@@ -466,6 +474,7 @@ void setup() {
     int retries = 0;
     while (status != WL_CONNECTED) {
       // enable onEvent call if need to trace detailed wifi behavior
+      // peters: disabled in production
       //WiFi.onEvent(WiFiEvent);      
       status = WiFi.begin(config.wifiNetwork, config.wifiPassword);
       if (status != WL_CONNECTED) {
@@ -601,12 +610,54 @@ void loop() {
         //#define MQTT_DISCONNECTED           -1
         //#define MQTT_CONNECTED               0
 
-        ESP_LOGI(TAG, "MQTT client disconnected state=%d: trying reconnect...", mqttClient.state()); 
-        bool rc = mqttReconnect();
-        if (!rc) {
-          ESP_LOGI(TAG, "MQTT reconnect attempt failed. Will try again in %d seconds", mqttReconnectInterval/1000); 
+        ESP_LOGI(TAG, "MQTT client disconnected state=%d, WiFi.status()=%d: trying reconnect...", 
+          mqttClient.state(), WiFi.status());
+         
+        bool delayReconnect = false;
+        if (WiFi.status() == WL_CONNECTED) {
+          // try dns. If that fails we consider wifi to be down, even if it shows wifi.status() OK (this is a bug in core code)
+          //remote host to test with DNS to find out if wifi is really up.
+          // not that this may not work in conditions where system is working without outside
+          //  of internet, e.g. if it has its own mqtt server and no inernet connectivity
+          //  using google.com, but could also use aws server if using aws iot.
+          const char* remoteHostTest = "www.google.com";
+          IPAddress remote_addr;
+      
+          if (WiFi.hostByName(remoteHostTest, remote_addr)) {
+            ESP_LOGD(TAG, "WiFi.hostByName() succeeded. Wifi is up.");
+          } else {
+            ESP_LOGW(TAG, "WiFi.hostByName() failed. Wifi may be down: restarting Wifi...");
+            delayReconnect = true;
+            WiFi.begin(config.wifiNetwork, config.wifiPassword);                                    
+          }
+          /*
+          IPAddress ip = WiFi.localIP();
+          bool rc = Ping.ping(ip);
+          String ipStr = String(ip.toString());            
+          if (!rc) {
+            ESP_LOGW(TAG, "WiFi.status() is WL_CONNECTED) but ping to my ip %s failed. Restarting Wifi...", 
+              ipStr.c_str()); 
+            WiFi.begin(config.wifiNetwork, config.wifiPassword);            
+          } else {
+            ESP_LOGD(TAG, "ping to my ip %s succeeded.", 
+              ipStr.c_str());
+               
+          }
+          */
+        } else {
+          // TODO: add handling of a normal wifi disconnect
+          ESP_LOGE(TAG, "mqttReconnect: Wifi.status() is not WL_CONNECTED (0), but %d. Add code in loop to restart WiFi.begin()\n", WiFi.status());          
         }
-        lastMqttConnectionAttempt = millis();
+        if (!delayReconnect) {
+          bool rc = mqttReconnect();
+          if (!rc) {
+            ESP_LOGI(TAG, "MQTT reconnect attempt failed. Will try again in %d seconds", mqttReconnectInterval/1000);
+          }          
+          lastMqttConnectionAttempt = millis();
+        } else {
+          // TODO: allow 10 more seconds to wifi fully connect before retrying.
+          //lastMqttConnectionAttempt += 10000;
+        }
       }      
     }
   }  
@@ -780,6 +831,7 @@ void waitForResponse(int deviceIndex) {
 
   // log messages that have data but were not processed because of lack of EOL
   if (config.consoleEnabled && processed == false && deviceMessageIndex > 0) {
+    // peters: enable for production
     Serial.printf("%d no eol: %s\n", deviceIndex + 1, deviceMessage);
   } 
 
@@ -998,6 +1050,8 @@ void sendStatus() {
   DynamicJsonDocument doc(256);
   doc["wifi_network"] = config.wifiNetwork;
   doc["version"] = config.version;
+  // peters: disable for production
+  // doc["minorVersion"] = FIRMWARE_VERSION_MINOR;
   doc["host"] = HOST_ADDRESS;
   // useful for testing OTA, wifi bug tracking etc.
   //   it can be removed later
