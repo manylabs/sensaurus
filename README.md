@@ -31,7 +31,7 @@ The hub can communicate with an MQTT server. We use the following topics:
 *   `[owner_id]/hub/[hub_id]/devices` (JSON dictionary of device info by device_id)
 *   `[owner_id]/hub/[hub_id]/sensors` (JSON dictionary with sensor values (from hub) by component_id)
 *   `[owner_id]/hub/[hub_id]/actuators` (JSON dictionary with actuator values (for hub) by component_id)
-*   `[owner_id]/device/[device_id]` (string value of current hub_id for this device)
+*   `[owner_id]/device/[device_id]` (JSON dictionary with current hub_id for this device)
 
 ## Installing ESP32 software
 

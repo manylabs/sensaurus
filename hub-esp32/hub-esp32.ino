@@ -1151,7 +1151,8 @@ void sendDeviceInfo() {
       first = false;
       String topicName = String(config.ownerId) + "/device/" + dev.id();
       if (config.wifiEnabled) {
-        if (hubPublish(topicName.c_str(), config.hubId)) {  // send hub ID for this device
+        String message = String("{\"hub_id\":\"") + config.hubId + "\"}";
+        if (hubPublish(topicName.c_str(), message.c_str())) {  // send hub ID for this device
           Serial.println("error publishing");
         }
       }
