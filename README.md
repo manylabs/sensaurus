@@ -44,10 +44,124 @@ The hub can communicate with an MQTT server. We use the following topics:
 1.  Go to Arduino IDE preferences and set the `Sketchbook location` to the `sensaurus` folder. This allows the IDE to find the required libraries.
 2.  Restart the Arduino IDE.
 3.  Copy `sample_settings.h` to `settings.h` and edit it as needed. You'll need MQTT server information and WiFi network information.
-4.  Select `DOIT ESP32 DEVKIT V1` from board list (or other board type if needed).
-5.  Press Ctrl-R (or Command-R) to compile. It may take a little while given the various library dependencies.
+4.  If you are enabling AWS MQTT and BLE at the same time, you'll need to change the partitions for the program to fit on the ESP32. 
+    Instructions for this are at the end of this document.
+5.  Select `DOIT ESP32 DEVKIT V1` from board list (or other board type if needed).
+6.  Press Ctrl-R (or Command-R) to compile. It may take a little while given the various library dependencies.
 
-### Building with Changed Partitions
+## Uploading to ESP32
+
+1.  Plug in the ESP32 board.
+2.  Select `DOIT ESP32 DEVKIT V1` from board list (or other board type if needed).
+3.  Select serial port.
+4.  Press Ctrl-U (or Command-U) to upload.
+5.  After IDE shows `Connecting...`, push `BOOT` button on ESP32 for several seconds (until upload starts).
+
+## Status LEDs
+
+The yellow LEDs indicate which plugs have devices connected. The yellow LED is turned on when meta-data is received from a device. 
+It is turned off if the device fails to respond to two consecutive polling messages.
+
+## Running the hub simulator
+
+The simulator is in the `hub-sim` folder.
+
+1.  Use pip to install `hjson` and `paho-mqtt`.
+2.  Use the AWS IoT web interface to create a new "thing." Get the certificates and host name from the web interface.
+3.  Create a sub-folder called `cert` in `hub-sim` containing the key and certificates for this hub.
+4.  Copy `sample_config.hjson` to `config.hjson` and edit the host, certificate paths, etc. as needed.
+    (You can leave the `owner_id` and `hub_id` as is for now.)
+5.  Run `sim.py`.
+
+## Running the remote test code
+
+The remote test code is in the `hub-remote-test` folder. This script can be used to interact with a remote (or local) hub via MQTT messages.
+It will send a configuration message to the hub and listen for messages from the hub.
+
+1.  Set up the simulator code as described above.
+2.  Copy your config.hjson file to the `hub-remote-test` folder.
+3.  Run `remote_test.py`.
+
+## Hub Operation Modes, Settings via BLE
+
+Sensaurus allows configuration via Bluetooth Low Energy (BLE). But in order to do that we have to overcome memory
+limitation of ESP32 where both BLE and AWS IOT doesn't fit into memory. Therefore the hub may operate at any
+time in one of two mode: BLE mode and AWS IOT mode.
+When in BLE mode, AWS IOT will be disabled and switching modes will require a reboot.
+
+When in BLE mode, settings can be changed using Web based Sensaurus BLE Configuration Client in ble-config directory.
+
+When the hub starts up, it will normally start in AWS IOT mode.
+If during the start up, hub can't connect to WIFI it will start in BLE mode.
+
+There are 4 ways to switch between BLE mode and AWS IOT mode:
+
+* when hub is started and in operation, send command "bleStart" (to switch to BLE mode) or "bleExit" (to exit BLE mode and switch to AWS IOT mode)
+  via BLE command attribute or via AWS IOT/MQTT command
+* press the restart button on the hub and keep pressing the configuration button, starting about a second after pressing reset
+  and keep pressing for a few seconds. The configuration button press will be detected right after wifi is connected.
+* when hub is started and in operation, in either mode, press settings/configuration button on the hub (this will reboot and switch to BLE mode)
+* press the restart button on the hub (this will reboot and switch to AWS IOT mode)
+
+## Sensaurus BLE Configuration Client
+
+Note: as of firmware version 2, settings of certificate and private key is not fully implemented in
+Sensaurus BLE Configuration Client.
+
+To run the configuration client, load ble-config/index.html into Chrome browser
+and follow these steps:
+
+* make sure a hub nearby is in BLE mode (e.g. by pressing the settings button on ESP32)
+* click on "Select Hub" in the browser page
+* select the hub and click "Pair" button
+* the fields will populate with current values from the hub
+* modify the fields to reflect the required new settings
+* click on "Save" button. This will send settings via BLE to the hub, the hub will save them in EEPROM and restart the hub in AWS IOT mode
+
+Note: if settings haven't changed, the hub will not save anything but will restart the hub in AWS IOT mode
+To repeat the settings procedure, switch the hub to BLE mode and click "Select Hub" or "Reconnect" button.
+
+## Testing OTA
+
+As of July, 2019 OTA is implemented without HTTP support, via Arduino IDE, as described here:
+
+https://diyprojects.io/arduinoota-esp32-wi-fi-ota-wireless-update-arduino-ide/
+https://lastminuteengineers.com/esp8266-ota-updates-arduino-ide/
+
+To test OTA:
+
+* make sure a recent version with OTA support has been burned via serial port - that allows
+  the unit to accept OTA updates
+* in Arduino IDE, switch port to a network port corresponding to the unit IP
+  If you don't see the network port, try restarting Adruino IDE
+* perform update via IDE - you'll see progress "..." as the firmware is updated
+* you can verify using test_remote.py tool that a status has been received from the hub with a recent
+  built timestamp, e.g. like this:
+
+  {'wifi_network': 'Fatra', 'version': 2, 'built': 'Tue Jul 16 09:46:03 2019', 'host': 'a1zmu4vkfpn2wo-ats.iot.us-west-2.amazonaws.com'}
+
+Note: the hub will accept OTA updates in both BLE mode (as long as WIFI is connected) and AWS IOT mode.
+If you don't see network port for your hub, make sure your development machine is on the same network or WIFI, and also
+see known problems/troubleshooting tips for Arduino IDE here:
+https://forum.arduino.cc/index.php?topic=575560.0
+
+## Hardware Information
+
+We use the follow ESP32 pins:
+
+*   configuration button: 4
+*   status LED: 5
+*   device connection LEDs: 16, 17, 18, 19, 21, 22
+*   device serial data: 23, 25, 26, 27, 32, 33
+
+We communicate with the devices using 38400 baud half-duplex serial. The hub polls each device and the device has 50 ms to reply. 
+(This allows about 190 bytes of reply data.)
+
+## Uploading Device Code
+
+Use the Arduino IDE with the `Arduino Pro or Pro Mini` selected in the board menu. Check the orientation of your FTDI board.
+
+## Building with Changed Partitions
 
 In order to allow BLE to fit into sketch/firmware, the default partition table had to be modified.
 As of July 2019, for experimental reasons, we allow compiling without BLE, with default partition table,
@@ -72,7 +186,7 @@ To build with changed partitions and be able to test BLE mode:
  * build and test
 
 ---
-#### Board definition for  node32smax: Node32s Dev Module (Max Memory)
+### Board definition for  node32smax: Node32s Dev Module (Max Memory)
 
 Note: maximum_size=1900544 corresponds to app0/app1 size 0x1D0000.
 
@@ -117,101 +231,3 @@ Note: maximum_size=1900544 corresponds to app0/app1 size 0x1D0000.
   node32smax.menu.UploadSpeed.460800.upload.speed=460800
   node32smax.menu.UploadSpeed.512000.windows=512000
   node32smax.menu.UploadSpeed.512000.upload.speed=512000
-
-## Uploading to ESP32
-
-1.  Plug in the ESP32 board.
-2.  Select `DOIT ESP32 DEVKIT V1` from board list (or other board type if needed).
-3.  Select serial port.
-4.  Press Ctrl-U (or Command-U) to upload.
-5.  After IDE shows `Connecting...`, push `BOOT` button on ESP32 for several seconds (until upload starts).
-
-## Running the hub simulator
-
-The simulator is in the `hub-sim` folder.
-
-1.  Use pip to install `hjson` and `paho-mqtt`.
-2.  Use the AWS IoT web interface to create a new "thing." Get the certificates and host name from the web interface.
-3.  Create a sub-folder called `cert` in `hub-sim` containing the key and certificates for this hub.
-4.  Copy `sample_config.hjson` to `config.hjson` and edit the host, certificate paths, etc. as needed.
-    (You can leave the `owner_id` and `hub_id` as is for now.)
-5.  Run `sim.py`.
-
-## Running the remote test code
-
-The remote test code is in the `hub-remote-test` folder. This script can be used to interact with a remote (or local) hub via MQTT messages.
-It will send a configuration message to the hub and listen for messages from the hub.
-
-1.  Set up the simulator code as described above.
-2.  Copy your config.hjson file to the `hub-remote-test` folder.
-3.  Run `remote_test.py`.
-
-## Hub Operation Modes, Settings via BLE
-
-Sensaurus allows configuration via Bluetooth Low Energy (BLE). But in order to do that we have to overcome memory
-limitation of ESP32 where both BLE and AWS IOT doesn't fit into memory. Therefore the hub may operate at any
-time in one of two mode: BLE mode and AWS IOT mode.
-When in BLE mode, AWS IOT will be disabled and switching modes will require a reboot.
-
-When in BLE mode, settings can be changed using Web based Sensaurus BLE Configuration Client in ble-config directory.
-
-When the hub starts up, it will normally start in AWS IOT mode.
-If during the start up, hub can't connect to WIFI it will start in BLE mode.
-
-There are 4 ways to switch between BLE mode and AWS IOT mode:
-
-* when hub is started and in operation, send command "bleStart" (to switch to BLE mode) or "bleExit" (to exit BLE mode and switch to AWS IOT mode)
-  via BLE command attribute or via AWS IOT/MQTT command
-* press the restart button on the hub and keep pressing the configuration button, starting about a second after pressing reset
-  and keep pressing for a few seconds. The configuration button press will be detected right after wifi is connected.
-* when hub is started and in operation, in either mode, press settings/configuration button on the hub (this will reboot and switch to BLE mode)
-* press the restart button on the hub (this will reboot and switch to AWS IOT mode)
-
-Note:
-As of July 2019, the default button to use to force Hub that's running in AWS IOT mode into BLE mode is the boot button (GPIO0 T1 on ESP32 node32s).
-This is temporary in order to allow those without external button and breadboard to test and will eventually be changed
-to use GPIO2 T0 (pin 4).
-
-See #define USE_BUTTON_BOOT in source code to change the behavior.
-
-## Sensaurus BLE Configuration Client
-
-Note: as of firmware version 2, settings of certificate and private key is not fully implemented in
-Sensaurus BLE Configuration Client.
-
-To run the configuration client, load ble-config/index.html into Chrome browser
-and follow these steps:
-
-* make sure a hub nearby is in BLE mode (e.g. by pressing the settings button on ESP32)
-* click on "Select Hub" in the browser page
-* select the hub and click "Pair" button
-* the fields will populate with current values from the hub
-* modify the fields to reflect the required new settings
-* click on "Save" button. This will send settings via BLE to the hub, the hub will save them in EEPROM and restart the hub in AWS IOT mode
-
-Note: if settings haven't changed, the hub will not save anything but will restart the hub in AWS IOT mode
-To repeat the settings procedure, switch the hub to BLE mode and click "Select Hub" or "Reconnect" button.
-
-## Testing OTA
-
-As of July, 2019 OTA is implemented without HTTP support, via Arduino IDE, as described here:
-
-https://diyprojects.io/arduinoota-esp32-wi-fi-ota-wireless-update-arduino-ide/
-https://lastminuteengineers.com/esp8266-ota-updates-arduino-ide/
-
-To test OTA:
-
-* make sure a recent version with OTA support has been burned via serial port - that allows
-  the unit to accept OTA updates
-* in Arduino IDE, switch port to a network port corresponding to the unit IP
-  If you don't see the network port, try restarting Adruino IDE
-* perform update via IDE - you'll see progress "..." as the firmware is updated
-* you can verify using test_remote.py tool that a status has been received from the hub with a recent
-  built timestamp, e.g. like this:
-
-  {'wifi_network': 'Fatra', 'version': 2, 'built': 'Tue Jul 16 09:46:03 2019', 'host': 'a1zmu4vkfpn2wo-ats.iot.us-west-2.amazonaws.com'}
-
-Note: the hub will accept OTA updates in both BLE mode (as long as WIFI is connected) and AWS IOT mode.
-If you don't see network port for your hub, make sure your development machine is on the same network or WIFI, and also
-see known problems/troubleshooting tips for Arduino IDE here:
-https://forum.arduino.cc/index.php?topic=575560.0
