@@ -9,7 +9,7 @@
 #include "NTPClient.h"
 #include "WiFiUdp.h"
 #include "ArduinoJson.h"
-#include "HubSerial.h"
+#include "SimpleHubSerial.h"
 #include "CheckStream.h"
 #include "Sensaur.h"
 #include "SensaurDevice.h"
@@ -382,13 +382,13 @@ void dumpConfig(const Config* c) {
 #define EEPROM_SIZE sizeof(Config)
 
 // serial connections to each device
-HubSerial devSerial[] = {
-  HubSerial(SERIAL_PIN_1, SERIAL_BUFFER_SIZE),
-  HubSerial(SERIAL_PIN_2, SERIAL_BUFFER_SIZE),
-  HubSerial(SERIAL_PIN_3, SERIAL_BUFFER_SIZE),
-  HubSerial(SERIAL_PIN_4, SERIAL_BUFFER_SIZE),
-  HubSerial(SERIAL_PIN_5, SERIAL_BUFFER_SIZE),
-  HubSerial(SERIAL_PIN_6, SERIAL_BUFFER_SIZE),
+SimpleHubSerial devSerial[] = {
+  SimpleHubSerial(SERIAL_PIN_1),
+  SimpleHubSerial(SERIAL_PIN_2),
+  SimpleHubSerial(SERIAL_PIN_3),
+  SimpleHubSerial(SERIAL_PIN_4),
+  SimpleHubSerial(SERIAL_PIN_5),
+  SimpleHubSerial(SERIAL_PIN_6),
 };
 
 
@@ -747,7 +747,6 @@ void loop() {
 // loop through all the devices, requesting a value from each one
 void doPolling() {
   for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
-    deviceMessageIndex = 0;
     if (devices[i].componentCount()) {
       devStream[i].println('v');  // request values (if any)
     } else {
@@ -793,50 +792,34 @@ void handleIncomingMessage(char *topicName, int payloadLen, char *payLoad) {
 
 
 void waitForResponse(int deviceIndex) {
+  SimpleHubSerial &ser = devSerial[deviceIndex];
+  ser.startRead();
+  deviceMessageIndex = 0;
 
-  // read a message into serial device's buffer
+  // read a message into our buffer
   unsigned long startTime = millis();
   do {
-    devSerial[deviceIndex].busyReadByte(config.responseTimeout);
-    if (devSerial[deviceIndex].peek() == 13) {
+    char c = (char) ser.readByte(config.responseTimeout);
+    if (c < 32) {
       break;
+    } else {
+      if (deviceMessageIndex < DEVICE_MESSAGE_BUF_LEN - 1) {
+        deviceMessage[deviceMessageIndex++] = c;
+      }
     }
   } while (millis() - startTime < config.responseTimeout);  // put this at end so we're less likely to miss first character coming back form device
+  ser.endRead();
 
-  // copy into our internal buffer and process message
-  deviceMessageIndex = 0;
-  bool processed = false;
-  while (devStream[deviceIndex].available()) {
-    char c = devStream[deviceIndex].read();
-    if (c == 10 || c == 13) {
-      if (deviceMessageIndex) {  // don't process empty messages
-        deviceMessage[deviceMessageIndex] = 0;
-        Device &d = devices[deviceIndex];
-        if (d.connected() == false) {
-          d.setConnected(true);
-          d.responded();  // reset the no-response counter
-          d.resetComponents();  // clear out all the components until we get a meta-data message
-        }
-        processMessageFromDevice(deviceIndex);
-        processed = true;
-        break;
-      }
-    } else {
-      deviceMessage[deviceMessageIndex] = c;
-      if (deviceMessageIndex < DEVICE_MESSAGE_BUF_LEN - 1) {
-        deviceMessageIndex++;
-      }
-    }
-  }
-
-  // log messages that have data but were not processed because of lack of EOL
-  if (config.consoleEnabled && processed == false && deviceMessageIndex > 0) {
-    // peters: enable for production
-    Serial.printf("%d no eol: %s\n", deviceIndex + 1, deviceMessage);
-  } 
-
-  // if we didn't get any bytes from the device, it may be disconnected
+  // process the message
   if (deviceMessageIndex) {
+    Device &d = devices[deviceIndex];
+    if (d.connected() == false) {
+      d.setConnected(true);
+      d.responded();  // reset the no-response counter
+      d.resetComponents();  // clear out all the components until we get a meta-data message
+    }
+    deviceMessage[deviceMessageIndex] = 0;
+    processMessageFromDevice(deviceIndex);
     devices[deviceIndex].responded();
   } else {
     devices[deviceIndex].noResponse();
