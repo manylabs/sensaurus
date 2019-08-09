@@ -1,4 +1,5 @@
 #include "SoftwareSerialWithHalfDuplex.h"
+#define USE_CHECK_STREAM_BUFFER
 #include "CheckStream.h"
 #include "Sensaur.h"
 #include "DHT.h"
