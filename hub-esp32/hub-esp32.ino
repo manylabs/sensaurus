@@ -37,12 +37,12 @@
 // firmware version for this application: EEPROM will be erased and configuration needed
 //  if version is incremented
 #define FIRMWARE_VERSION 3
-#define FIRMWARE_VERSION_MINOR 8
+#define FIRMWARE_VERSION_MINOR 10
 #define MAX_DEVICE_COUNT 6
 //peters
-//#define CONSOLE_BAUD 9600
+#define CONSOLE_BAUD 9600
 // peterm
-#define CONSOLE_BAUD 115200
+//#define CONSOLE_BAUD 115200
 #define DEV_BAUD 38400
 #define SERIAL_BUFFER_SIZE 120
 
@@ -56,8 +56,7 @@
 // app1,     app,  ota_1,   0x1E0000,0x1D0000,
 // spiffs,   data, spiffs,  0x3B0000,0x50000,
 
-// peters: preferred default config:
-// undef BLE, MQTT, def OTA, AWS_IOT
+// ENABLE_BLE, ENABLE_MQTT, ENABLE_AWS_IOT are handled in settings.h
 // uncomment ENABLE_BLE to enable BLE
 // only one of ENABLE_AWS_IOT and ENABLE_MQTT must be defined
 // uncomment ENABLE_MQTT to enable simple/vanilla mqtt instead of AWS IOT MQTT 
@@ -89,7 +88,9 @@
 static const char* TAG = "sensaurus";
 
 // max number of time WIFI connection is retried
-const int MAX_WIFI_RETRIES = 3;
+static const int MAX_WIFI_RETRIES = 3;
+// retry threshold for reconnect attempt, after wifi was last connected (lastWifiConnected)
+static const int WIFI_LAST_CONNECTED_RETRY_FRESHOLD = 15000;
 
 // BLE mode indicator if 0, we are in wifi/iot-aws mode
 // noinit attribute preserves the value during a software reset, thus allowing switching
@@ -102,6 +103,7 @@ static int swReboot = 0;
 static bool pubsubEnabled = false;
 // indicates if settings have been modified and need to be save to EEPROM at "bleExit"
 static bool dirty = false;
+static unsigned long lastWifiConnected = 0;
 
 
 #define BUTTON_PIN 4
@@ -174,18 +176,6 @@ String bootTime;
 
 auto blueLed = JLed(2);
 
-// *******************
-// Debug functions ***
-// *******************
-void displayFreeHeap(const char* title) {
-#if LOG_LOCAL_LEVEL >= ESP_LOG_VERBOSE
-  Serial.print(title);
-  Serial.printf("\nHeap size: %d\n", ESP.getHeapSize());
-  Serial.printf("Free Heap: %d\n", heap_caps_get_free_size(MALLOC_CAP_8BIT));
-  Serial.printf("Min Free Heap: %d\n", heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
-  Serial.printf("Max Alloc Heap: %d\n", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
-#endif  
-}
 
 // *******************
 // Utility functions * 
@@ -348,24 +338,23 @@ void WiFiEvent(WiFiEvent_t event)
   case SYSTEM_EVENT_AP_STA_GOT_IP6:
     //both interfaces get the same event
     ESP_LOGD(TAG, "WiFiEvent: %s", "STA IPv6: ");
-    Serial.println(WiFi.localIPv6());
-    Serial.print("AP IPv6: ");
-    Serial.println(WiFi.softAPIPv6());
+    //Serial.println(WiFi.localIPv6());
+    //Serial.print("AP IPv6: ");
+    //Serial.println(WiFi.softAPIPv6());
     break;
   case SYSTEM_EVENT_STA_LOST_IP:
     ESP_LOGD(TAG, "WiFiEvent: %s", "SYSTEM_EVENT_STA_LOST_IP");
     break;    
   case SYSTEM_EVENT_STA_GOT_IP:
     ESP_LOGD(TAG, "WiFiEvent: %s", "SYSTEM_EVENT_STA_GOT_IP");
-    Serial.println("IP address: ");
-    Serial.println(WiFi.localIP());
+    //Serial.println("IP address: ");
+    //Serial.println(WiFi.localIP());
     wifi_connected = true;
+    lastWifiConnected = millis();
     break;
   case SYSTEM_EVENT_STA_DISCONNECTED:
     wifi_connected = false;
     ESP_LOGD(TAG, "WiFiEvent: SYSTEM_EVENT_STA_DISCONNECTED");
-    delay(1000);
-    //WiFi.begin(ssid, password);
     break;
   default:
     break;  
@@ -456,8 +445,8 @@ void setup() {
   // Use ESP_LOG_WARN, ESP_LOG_INFO, ESP_LOG_DEBUG, ESP_LOG_VERBOSE to get less or more verbosity
   // A good value for production release is ESP_LOG_WARN or ESP_LOG_INFO
   // peters: set to WARN/INFO for production
-  esp_log_level_set("*", ESP_LOG_VERBOSE);
-  esp_log_level_set(TAG, ESP_LOG_VERBOSE);
+  esp_log_level_set("*", ESP_LOG_WARN);
+  esp_log_level_set(TAG, ESP_LOG_INFO);
   
   // init. bleMode persistent variable if needed 
   // ESP_RST_SW Software reset via esp_restart.
@@ -492,7 +481,7 @@ void setup() {
     int retries = 0;
     while (status != WL_CONNECTED) {
       // enable onEvent call if need to trace detailed wifi behavior
-      // peters: disabled in production
+      // use wifi event to establish asynchronously that wifi has been connected and IP is known
       WiFi.onEvent(WiFiEvent);      
       status = WiFi.begin(config.wifiNetwork, config.wifiPassword);
       if (status != WL_CONNECTED) {
@@ -634,38 +623,31 @@ void loop() {
          
         bool delayReconnect = false;
         if (wifiStatus == WL_CONNECTED) {
-          // try dns. If that fails we consider wifi to be down, even if it shows wifi.status() OK (this is a bug in core code)
-          //remote host to test with DNS to find out if wifi is really up.
-          // not that this may not work in conditions where system is working without outside
-          //  of internet, e.g. if it has its own mqtt server and no inernet connectivity
-          //  using google.com, but could also use aws server if using aws iot.
-          const char* remoteHostTest = "www.google.com";
-          IPAddress remote_addr;
-      
-          if (WiFi.hostByName(remoteHostTest, remote_addr)) {
-            ESP_LOGD(TAG, "WiFi.hostByName() succeeded. Wifi is up.");
-          } else {
-            ESP_LOGW(TAG, "WiFi.hostByName() failed. Wifi may be down: restarting Wifi...");
-            delayReconnect = true;
-            WiFi.begin(config.wifiNetwork, config.wifiPassword);                                    
+
+          // only perform this test if wifi was not recently connected.
+          //   this is because shortly after wifi connects, DNS lookup via hostByName seems to fail.
+          if ((millis() - lastWifiConnected) > WIFI_LAST_CONNECTED_RETRY_FRESHOLD) {
+            // Perform dns lookup. If that fails we consider wifi to be down, even if it shows wifi.status() OK 
+            //  (this is a bug in core code)
+            //remote host to test with DNS to find out if wifi is really up.
+            // not that this may not work in conditions where system is working without outside
+            //  of internet, e.g. if it has its own mqtt server and no inernet connectivity
+            //  using google.com, but could also use aws server if using aws iot.
+            const char* remoteHostTest = "www.google.com";
+            IPAddress remote_addr;
+        
+            if (WiFi.hostByName(remoteHostTest, remote_addr)) {
+              ESP_LOGD(TAG, "WiFi.hostByName() succeeded. Wifi is up.");
+            } else {
+              ESP_LOGW(TAG, "WiFi.hostByName() failed. Wifi may be down: restarting Wifi...");
+              delayReconnect = true;
+              WiFi.begin(config.wifiNetwork, config.wifiPassword);                                    
+            }          
           }
-          /*
-          IPAddress ip = WiFi.localIP();
-          bool rc = Ping.ping(ip);
-          String ipStr = String(ip.toString());            
-          if (!rc) {
-            ESP_LOGW(TAG, "WiFi.status() is WL_CONNECTED) but ping to my ip %s failed. Restarting Wifi...", 
-              ipStr.c_str()); 
-            WiFi.begin(config.wifiNetwork, config.wifiPassword);            
-          } else {
-            ESP_LOGD(TAG, "ping to my ip %s succeeded.", 
-              ipStr.c_str());
-               
-          }
-          */
         } else {
-          // TODO: add handling of a normal wifi disconnect
-          ESP_LOGE(TAG, "mqttReconnect: Wifi.status() is not WL_CONNECTED (0), but %d. Add code in loop to restart WiFi.begin()\n", wifiStatus);          
+          ESP_LOGE(TAG, "mqttReconnect: Wifi.status() is not WL_CONNECTED (0), but %d. WIFI may have disconnected because of router reboot or a problem with hub. Restarting WiFi connection...\n", wifiStatus);          
+          delayReconnect = true;
+          WiFi.begin(config.wifiNetwork, config.wifiPassword);                                    
         }
         if (!delayReconnect) {
           bool rc = mqttReconnect();
@@ -675,7 +657,7 @@ void loop() {
           lastMqttConnectionAttempt = millis();
         } else {
           // TODO: allow 10 more seconds to wifi fully connect before retrying.
-          //lastMqttConnectionAttempt += 10000;
+          lastMqttConnectionAttempt += 15000;
         }
       }      
     }
@@ -1053,7 +1035,7 @@ void sendStatus() {
   doc["wifi_network"] = config.wifiNetwork;
   doc["version"] = config.version;
   // peters: disable for production
-  doc["minorVersion"] = FIRMWARE_VERSION_MINOR;
+  //doc["minorVersion"] = FIRMWARE_VERSION_MINOR;
   doc["host"] = HOST_ADDRESS;
   // useful for testing OTA, wifi bug tracking etc.
   //   it can be removed later
@@ -1310,6 +1292,20 @@ void freezeWithError() {
   }
 }
 
+
+// *******************
+// Debug functions ***
+// *******************
+void displayFreeHeap(const char* title) {
+#if LOG_LOCAL_LEVEL >= ESP_LOG_VERBOSE
+  ESP_LOGD(TAG, "displayFreeHeap at %s (%d)\n", timeClient.getFormattedTime() , millis());
+  Serial.print(title);  
+  Serial.printf("\nHeap size: %d\n", ESP.getHeapSize());
+  Serial.printf("Free Heap: %d\n", heap_caps_get_free_size(MALLOC_CAP_8BIT));
+  Serial.printf("Min Free Heap: %d\n", heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+  Serial.printf("Max Alloc Heap: %d\n", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+#endif  
+}
 
 #ifdef ENABLE_BLE
 
