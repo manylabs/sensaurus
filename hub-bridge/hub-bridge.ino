@@ -8,11 +8,13 @@
 
 
 #define MAX_DEVICE_COUNT 5
-#define HUB_BAUD 38400
+#define HUB_BAUD 9600
 #define DEV_BAUD 38400
 #define RED_PIN A0
 #define GREEN_PIN A1
 #define BLUE_PIN A2
+#define RESPONSE_TIMEOUT 50  // msec
+#define POLL_INTERVAL 1000  // msec
 
 
 // serial connections to each device
@@ -56,6 +58,11 @@ int listenDevice = -1;
 CheckStream hubStream(Serial);
 
 
+// for repeated polling
+bool repeatPolling = false;
+unsigned long lastPollTime = 0;
+
+
 void setup() {
   Serial.begin(HUB_BAUD);
   for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
@@ -79,6 +86,15 @@ void loop() {
     }
   }  
 
+  // do repeated poll
+  if (repeatPolling) {
+    unsigned long time = millis();
+    if (time - lastPollTime > 1000) {
+      doPolling('v');
+      lastPollTime = time;
+    }
+  }
+
   // simple serial bridge; can be used for debugging
   /*
   while (Serial.available()) {
@@ -92,21 +108,21 @@ void loop() {
 
 
 // loop through all the devices, requesting a value from each one
-void doPolling() {
+void doPolling(char pollMessage) {
   for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
     deviceMessageIndex = 0;
     devSerial[i].listen();
     unsigned long startTime = millis();
 
     // send request to device
-    devStream[i].println("v");
+    devStream[i].println(pollMessage);
 
-    // wait 100 msec for reply
+    // wait for reply
     do {
       if (processDeviceMessage(i)) {
         break;
       }
-    } while (millis() - startTime < 100);  // put this at end so we're less likely to miss first character coming back form device
+    } while (millis() - startTime < RESPONSE_TIMEOUT);  // put this at end so we're less likely to miss first character coming back form device
   }
 }
 
@@ -150,13 +166,21 @@ void processByteFromComputer(char c) {
   if (c == 10 || c == 13) {
     if (hubMessageIndex) {  // if we have a message from the hub computer
       hubMessage[hubMessageIndex] = 0;
-      if (checksumOk(hubMessage, true) == 0) {
-        hubStream.println("e:crc");
-        hubMessageIndex = 0;
-        return;
-      }  
+      #ifdef REQUIRE_CHECKSUM_FROM_HUB_COMPUTER
+        if (checksumOk(hubMessage, true) == 0) {
+          hubStream.println("e:crc");
+          hubMessageIndex = 0;
+          return;
+        }  
+      #endif
       if (hubMessage[0] == 'p') {  // poll all the devices for their current values
-        doPolling();
+        doPolling('v');
+      }
+      if (hubMessage[0] == 'm') {  // poll all the devices for metadata
+        doPolling('m');
+      }
+      if (hubMessage[0] == 'r') {  // repeat polling
+        repeatPolling = true;
       }
       if (hubMessageIndex > 2 && hubMessage[1] == '>') {  // send a message to a specific device
         int deviceIndex = hubMessage[0] - '0';
