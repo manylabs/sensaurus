@@ -3,6 +3,7 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include "AWS_IOT.h"
+// set this in PubSubClient.h: #define MQTT_KEEPALIVE 60
 #include "PubSubClient.h"
 #include "jled.h"
 #include "WiFi.h"
@@ -36,13 +37,12 @@
 // firmware version for this application: EEPROM will be erased and configuration needed
 //  if version is incremented
 #define FIRMWARE_VERSION 3
-// Use for internal testing when changing version often for different experiments
-#define FIRMWARE_VERSION_MINOR 6
+#define FIRMWARE_VERSION_MINOR 8
 #define MAX_DEVICE_COUNT 6
 //peters
 //#define CONSOLE_BAUD 9600
 // peterm
-#define CONSOLE_BAUD 9600
+#define CONSOLE_BAUD 115200
 #define DEV_BAUD 38400
 #define SERIAL_BUFFER_SIZE 120
 
@@ -58,14 +58,30 @@
 
 // peters: preferred default config:
 // undef BLE, MQTT, def OTA, AWS_IOT
-// uncomment to enable BLE
-//#define ENABLE_BLE
-
+// uncomment ENABLE_BLE to enable BLE
 // only one of ENABLE_AWS_IOT and ENABLE_MQTT must be defined
-// uncomment to enable simple/vanilla mqtt instead of AWS IOT MQTT 
-//#define ENABLE_MQTT
-// uncomment to allow aws iot connections
+// uncomment ENABLE_MQTT to enable simple/vanilla mqtt instead of AWS IOT MQTT 
+// uncomment ENABLE_AWS_IOT to allow aws iot connections
+
+#if defined(BUILD_FLAVOR_AWS_NO_BLE)
+
 #define ENABLE_AWS_IOT
+
+#elif defined(BUILD_FLAVOR_AWS_BLE)
+
+#define ENABLE_AWS_IOT
+#define ENABLE_BLE
+
+#elif defined(BUILD_FLAVOR_MQTT_BLE)
+
+#define ENABLE_MQTT
+#define ENABLE_BLE
+
+#else
+#error "Build flavor was not specified. See settings.h or sample_settings.h for valid examples."
+#endif
+
+
 // uncomment to enabled OTA
 #define ENABLE_OTA
 
@@ -259,6 +275,51 @@ bool mqttReconnect() {
   return false;
 }
 
+
+
+#endif // ENABLE_MQTT
+
+#ifdef ENABLE_OTA
+// setup OTA
+void setupOTA() {
+  // Hostname defaults to esp3232-[MAC]
+  ArduinoOTA.setHostname(config.hubId);
+
+  ArduinoOTA
+    .onStart([]() {
+      String type;
+      if (ArduinoOTA.getCommand() == U_FLASH)
+        type = "sketch";
+      else // U_SPIFFS
+        type = "filesystem";
+
+      // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+      ESP_LOGI(TAG, "Start updating %s", type);
+    })
+    .onEnd([]() {
+      Serial.println("\nEnd");
+    })
+    .onProgress([](unsigned int progress, unsigned int total) {
+      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    })
+    .onError([](ota_error_t error) {
+      Serial.printf("Error[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+
+  ArduinoOTA.begin();
+
+  // we need ip address here so that we can test OTA via push from arduino ide
+  Serial.print("OTA ready. IP address: ");
+  Serial.println(WiFi.localIP());
+    
+}
+#endif // ENABLE_OTA
+
 static volatile bool wifi_connected = false;
 
 void WiFiEvent(WiFiEvent_t event)
@@ -310,49 +371,6 @@ void WiFiEvent(WiFiEvent_t event)
     break;  
   }
 }
-
-#endif // ENABLE_MQTT
-
-#ifdef ENABLE_OTA
-// setup OTA
-void setupOTA() {
-  // Hostname defaults to esp3232-[MAC]
-  ArduinoOTA.setHostname(config.hubId);
-
-  ArduinoOTA
-    .onStart([]() {
-      String type;
-      if (ArduinoOTA.getCommand() == U_FLASH)
-        type = "sketch";
-      else // U_SPIFFS
-        type = "filesystem";
-
-      // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
-      ESP_LOGI(TAG, "Start updating %s", type);
-    })
-    .onEnd([]() {
-      Serial.println("\nEnd");
-    })
-    .onProgress([](unsigned int progress, unsigned int total) {
-      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-    })
-    .onError([](ota_error_t error) {
-      Serial.printf("Error[%u]: ", error);
-      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-      else if (error == OTA_END_ERROR) Serial.println("End Failed");
-    });
-
-  ArduinoOTA.begin();
-
-  // we need ip address here so that we can test OTA via push from arduino ide
-  Serial.print("OTA ready. IP address: ");
-  Serial.println(WiFi.localIP());
-    
-}
-#endif // ENABLE_OTA
 
 // dump configuration to console for debugging purposes
 void dumpConfig(const Config* c) {
@@ -438,8 +456,8 @@ void setup() {
   // Use ESP_LOG_WARN, ESP_LOG_INFO, ESP_LOG_DEBUG, ESP_LOG_VERBOSE to get less or more verbosity
   // A good value for production release is ESP_LOG_WARN or ESP_LOG_INFO
   // peters: set to WARN/INFO for production
-  esp_log_level_set("*", ESP_LOG_WARN);
-  esp_log_level_set(TAG, ESP_LOG_INFO);
+  esp_log_level_set("*", ESP_LOG_VERBOSE);
+  esp_log_level_set(TAG, ESP_LOG_VERBOSE);
   
   // init. bleMode persistent variable if needed 
   // ESP_RST_SW Software reset via esp_restart.
@@ -475,7 +493,7 @@ void setup() {
     while (status != WL_CONNECTED) {
       // enable onEvent call if need to trace detailed wifi behavior
       // peters: disabled in production
-      //WiFi.onEvent(WiFiEvent);      
+      WiFi.onEvent(WiFiEvent);      
       status = WiFi.begin(config.wifiNetwork, config.wifiPassword);
       if (status != WL_CONNECTED) {
         delay(2000);
@@ -610,11 +628,12 @@ void loop() {
         //#define MQTT_DISCONNECTED           -1
         //#define MQTT_CONNECTED               0
 
+        int wifiStatus = WiFi.status();
         ESP_LOGI(TAG, "MQTT client disconnected state=%d, WiFi.status()=%d: trying reconnect...", 
-          mqttClient.state(), WiFi.status());
+          mqttClient.state(), wifiStatus);
          
         bool delayReconnect = false;
-        if (WiFi.status() == WL_CONNECTED) {
+        if (wifiStatus == WL_CONNECTED) {
           // try dns. If that fails we consider wifi to be down, even if it shows wifi.status() OK (this is a bug in core code)
           //remote host to test with DNS to find out if wifi is really up.
           // not that this may not work in conditions where system is working without outside
@@ -646,7 +665,7 @@ void loop() {
           */
         } else {
           // TODO: add handling of a normal wifi disconnect
-          ESP_LOGE(TAG, "mqttReconnect: Wifi.status() is not WL_CONNECTED (0), but %d. Add code in loop to restart WiFi.begin()\n", WiFi.status());          
+          ESP_LOGE(TAG, "mqttReconnect: Wifi.status() is not WL_CONNECTED (0), but %d. Add code in loop to restart WiFi.begin()\n", wifiStatus);          
         }
         if (!delayReconnect) {
           bool rc = mqttReconnect();
@@ -1034,7 +1053,7 @@ void sendStatus() {
   doc["wifi_network"] = config.wifiNetwork;
   doc["version"] = config.version;
   // peters: disable for production
-  // doc["minorVersion"] = FIRMWARE_VERSION_MINOR;
+  doc["minorVersion"] = FIRMWARE_VERSION_MINOR;
   doc["host"] = HOST_ADDRESS;
   // useful for testing OTA, wifi bug tracking etc.
   //   it can be removed later

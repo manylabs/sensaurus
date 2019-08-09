@@ -105,7 +105,7 @@ class Tester(object):
                     self.send_command('set_send_interval', {'send_interval': 1.0})
                     self.send_command('req_status')
                     self.send_command('req_devices')
-                if self.test_component_ids:
+                if self.config.get('no_actuator_send') and self.test_component_ids:
                     actuator_values = {comp_id: random.randint(0, 1) for comp_id in self.test_component_ids}
                     self.set_actuators(actuator_values)
             else:

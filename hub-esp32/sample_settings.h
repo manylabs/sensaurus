@@ -1,6 +1,16 @@
 #ifndef _SETTINGS_H_
 #define _SETTINGS_H_
 
+//********* Build environment - build flavors - START
+
+// define one of these. As of August 2019, production build
+//  should be done with BUILD_FLAVOR_AWS_NO_BLE
+#define BUILD_FLAVOR_AWS_NO_BLE
+//#define BUILD_FLAVOR_AWS_BLE
+//#define BUILD_FLAVOR_MQTT_BLE
+
+//********* Build environment - build flavors - END
+
 // in the future, everything in this file will be set via BLE
 
 // hub configuration
