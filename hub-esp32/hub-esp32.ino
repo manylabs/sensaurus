@@ -37,13 +37,16 @@
 // firmware version for this application: EEPROM will be erased and configuration needed
 //  if version is incremented
 #define FIRMWARE_VERSION 3
-#define FIRMWARE_VERSION_MINOR 10
+#define FIRMWARE_VERSION_MINOR 18
 #define MAX_DEVICE_COUNT 6
 //peters
-#define CONSOLE_BAUD 9600
+//#define CONSOLE_BAUD 9600
 // peterm
-//#define CONSOLE_BAUD 115200
+#define CONSOLE_BAUD 115200
+// peters
 #define DEV_BAUD 38400
+// peterm
+//#define DEV_BAUD 9600
 #define SERIAL_BUFFER_SIZE 120
 
 // Note: for BLE to build, maximum_size specified in boards.txt needs to be adjusted from 1310720 to:
@@ -127,6 +130,8 @@ static unsigned long lastWifiConnected = 0;
 #define WIFI_PASSWORD_UUID "30db3cd0-8eb1-41ff-b56a-a2a818873c34"
 #define OWNER_ID_UUID "af74141f-3c60-425a-9402-62ec79b58c1a"
 #define HUB_ID_UUID "e4636699-367b-4838-a421-1904cf95f869"
+#define CONSOLE_ENABLED_UUID "ead80ccd-47b6-406d-99f2-a67ec2783858"
+
 #define HUB_CERT_UUID "d1c4d088-fd9c-4881-8fc2-656441fa2cf4"
 #define HUB_KEY_UUID "f97fee16-f4c3-48ff-a315-38dc2b985770"
 #define BLE_CMD_UUID "93311ce4-a1e4-11e9-a3dc-60f81dcdd3b6"
@@ -171,8 +176,37 @@ char commandTopicName[100];  // apparently the topic name string needs to stay i
 char actuatorsTopicName[100];
 
 
+//****************************************
+//*********** Data for status report
+//****************************************
+
 unsigned long bootTimeEpoch = 0;
 String bootTime;
+
+//****************************************
+//*********** Error tracing related data 
+//****************************************
+enum EErrCode {
+  errChecksum       = 1,
+  errAwsIotConnect  = 2,
+  errOta            = 3,
+  errPublish        = 4,
+};
+
+// last timestamp of an error that occured in reading sensors or 
+//  for other reasons
+static int errLastTs = 0;
+// Error count since boot
+static int errCount = 0;
+// last error code
+static int errLastErrorCode = 0;
+
+static void setLastError(int erroCode) {
+  errLastTs = millis();
+  errLastErrorCode = erroCode;
+  errCount++;  
+}
+
 
 auto blueLed = JLed(2);
 
@@ -217,7 +251,7 @@ bool mqttReconnect() {
     if (WiFi.status() != WL_CONNECTED) {
         // see WiFiType.h
         //     WL_DISCONNECTED     = 6
-        ESP_LOGE(TAG, "mqttReconnect: Wifi.status() is not WL_CONNECTED (0), but %d. Will not attempt MQTT connection\n", WiFi.status());
+        ESP_LOGE(TAG, "mqttReconnect: Wifi.status() is not WL_CONNECTED (0), but %d. Will not attempt MQTT connection", WiFi.status());
         return false;
     }    
     ESP_LOGI(TAG, "Attempting MQTT connection...");
@@ -237,17 +271,17 @@ bool mqttReconnect() {
       // do subscriptions
       //rc = mqttClient.subscribe("252/hub/20197/command");
       //if (!rc) {
-      //  ESP_LOGE(TAG, "mqttReconnect: mqttClient.subscribe failed for %s: rc=%d, state=%d\n", "252/hub/20197/command", rc, mqttClient.state());
+      //  ESP_LOGE(TAG, "mqttReconnect: mqttClient.subscribe failed for %s: rc=%d, state=%d", "252/hub/20197/command", rc, mqttClient.state());
       //}      
       
       rc = mqttClient.subscribe(commandTopicName);
       if (!rc) {
-        ESP_LOGE(TAG, "mqttReconnect: mqttClient.subscribe failed for %s: rc=%d, state=%d\n", commandTopicName, rc, mqttClient.state());
+        ESP_LOGE(TAG, "mqttReconnect: mqttClient.subscribe failed for %s: rc=%d, state=%d", commandTopicName, rc, mqttClient.state());
         return rc;
       }            
       rc = mqttClient.subscribe(actuatorsTopicName);            
       if (!rc) {
-        ESP_LOGE(TAG, "mqttReconnect: mqttClient.subscribe failed for %s: rc=%d, state=%d\n", actuatorsTopicName, rc, mqttClient.state());
+        ESP_LOGE(TAG, "mqttReconnect: mqttClient.subscribe failed for %s: rc=%d, state=%d", actuatorsTopicName, rc, mqttClient.state());
       }            
       return rc;
     } else {
@@ -293,6 +327,7 @@ void setupOTA() {
       Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
     })
     .onError([](ota_error_t error) {
+      setLastError(errOta);
       Serial.printf("Error[%u]: ", error);
       if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
       else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
@@ -445,8 +480,9 @@ void setup() {
   // Use ESP_LOG_WARN, ESP_LOG_INFO, ESP_LOG_DEBUG, ESP_LOG_VERBOSE to get less or more verbosity
   // A good value for production release is ESP_LOG_WARN or ESP_LOG_INFO
   // peters: set to WARN/INFO for production
-  esp_log_level_set("*", ESP_LOG_WARN);
-  esp_log_level_set(TAG, ESP_LOG_INFO);
+  esp_log_level_set("*", ESP_LOG_VERBOSE);
+  esp_log_level_set(TAG, ESP_LOG_VERBOSE);
+  displayFreeHeap("setup start");
   
   // init. bleMode persistent variable if needed 
   // ESP_RST_SW Software reset via esp_restart.
@@ -543,6 +579,7 @@ void setup() {
       pubsubEnabled = true;
     } else {
       Serial.println("failed to connect to AWS");
+      setLastError(errAwsIotConnect);
       //freezeWithError();
     }
   } else {
@@ -596,6 +633,7 @@ void setup() {
     sendStatus();
   }
   Serial.println("ready");
+  displayFreeHeap("setup end");  
 }
 
 
@@ -645,7 +683,9 @@ void loop() {
             }          
           }
         } else {
-          ESP_LOGE(TAG, "mqttReconnect: Wifi.status() is not WL_CONNECTED (0), but %d. WIFI may have disconnected because of router reboot or a problem with hub. Restarting WiFi connection...\n", wifiStatus);          
+          // TODO: handle case were multiple wifi.begin calls are performed in 1 second
+          // 07:48:39.564 -> E (4522997) sensaurus: mqttReconnect: Wifi.status() is not WL_CONNECTED (0), but 6. WIFI may have disconnected because of router reboot or a problem with hub. Restarting WiFi connection...
+          ESP_LOGE(TAG, "mqttReconnect: Wifi.status() is not WL_CONNECTED (0), but %d. WIFI may have disconnected because of router reboot or a problem with hub. Restarting WiFi connection...", wifiStatus);          
           delayReconnect = true;
           WiFi.begin(config.wifiNetwork, config.wifiPassword);                                    
         }
@@ -656,7 +696,7 @@ void loop() {
           }          
           lastMqttConnectionAttempt = millis();
         } else {
-          // TODO: allow 10 more seconds to wifi fully connect before retrying.
+          // TODO: allow 10 more seconds for wifi fully connect before retrying.
           lastMqttConnectionAttempt += 15000;
         }
       }      
@@ -801,6 +841,8 @@ void waitForResponse(int deviceIndex) {
   unsigned long startTime = millis();
   do {
     char c = (char) ser.readByte(config.responseTimeout);
+    // peters    
+    // TODO: if non-ascii, try inserting 5ms sleep and retry
     if (c < 32) {
       break;
     } else {
@@ -839,8 +881,12 @@ void processMessageFromDevice(int deviceIndex) {
 
   if (checksumOk(deviceMessage, true) == 0) {
     if (config.consoleEnabled) {
-      Serial.printf("e:checksum error on plug %d\n", deviceIndex + 1);
+      //peters: use Serial instead of trace
+      //Serial.printf("e:checksum error on plug %d\n", deviceIndex + 1);
     }
+    //peters: remove this
+    ESP_LOGE(TAG, "e:checksum error on plug %d: %s", deviceIndex + 1, deviceMessage);      
+    setLastError(errChecksum);
     return;
   }
 
@@ -883,6 +929,8 @@ void processMessageFromDevice(int deviceIndex) {
       // send device/component info to server
       sendDeviceInfo();
     }
+  } else {
+    
   }
 }
 
@@ -906,7 +954,7 @@ void processByteFromComputer(char c) {
 
 
 void runCommand(const char *command, DynamicJsonDocument &doc) {
-  Serial.printf("runCommand: command=%s\n", command);
+  ESP_LOGD(TAG, "runCommand: %s\n", command);
   if (strcmp(command, "p") == 0) {  // poll all the devices for their current values
     Serial.println("polling");
     doPolling();
@@ -944,6 +992,27 @@ void runCommand(const char *command, DynamicJsonDocument &doc) {
     sendStatus();
   } else if (strcmp(command, "req_devices") == 0) {  // request a devices message
     sendDeviceInfo();
+  } else if (strcmp(command, "set_console_enabled") == 0) { // set log level
+    int console_enabled = doc["console_enabled"];
+    config.consoleEnabled = bool(console_enabled);
+    ESP_LOGI(TAG, "Setting consoleEnabled to %d", config.consoleEnabled);   
+  } else if (strcmp(command, "set_log_level") == 0) { // set log level
+    int logLevel = doc["log_level"];
+    if (logLevel > ESP_LOG_VERBOSE) {
+      logLevel = ESP_LOG_VERBOSE;
+    } else if (logLevel <  0) { 
+      logLevel = 0;
+    }
+    ESP_LOGI(TAG, "Setting log level to %d", logLevel);   
+    esp_log_level_set(TAG, (esp_log_level_t) logLevel);    
+  } else if (strcmp(command, "set_poll_interval") == 0) { // set pollInterval
+    int newPollInterval = doc["poll_interval"].as<int>() * 1000;
+    if (newPollInterval < 500) {
+      pollInterval = 500;
+    } else { 
+      pollInterval = newPollInterval;
+    }
+    ESP_LOGI(TAG, "Setting pollInterval %d", pollInterval);   
   } else if (strcmp(command, "set_send_interval") == 0) {
     sendInterval = round(1000.0 * doc["send_interval"].as<float>());
     if (sendInterval < 1000) {
@@ -1027,6 +1096,7 @@ void updateActuators(DynamicJsonDocument &doc) {
 }
 
 
+
 void sendStatus() {
   if (config.consoleEnabled) {
     Serial.print("sending status: ");
@@ -1035,21 +1105,31 @@ void sendStatus() {
   doc["wifi_network"] = config.wifiNetwork;
   doc["version"] = config.version;
   // peters: disable for production
-  //doc["minorVersion"] = FIRMWARE_VERSION_MINOR;
-  doc["host"] = HOST_ADDRESS;
+  doc["minor_version"] = FIRMWARE_VERSION_MINOR;
+  // host is constant for now and is not needed
+  //doc["host"] = HOST_ADDRESS;
   // useful for testing OTA, wifi bug tracking etc.
   //   it can be removed later
   // ---- start of debug info
   //
+  // trace and error information to trace checksum errors over time
+  doc["err_count"] = errCount;
+  doc["err_last_ts"] = errLastTs;
+  // last error code
+  doc["err_code"] = errLastErrorCode;
+  
+  doc["poll_interval"] = pollInterval;
+  
+  // local IP needed for OTA
   String localIp = String(WiFi.localIP().toString());
-  doc["localIP"] = localIp;
+  doc["local_ip"] = localIp;
   doc["built"] = __TIMESTAMP__;  // useful for tracing updated firmware where version has not changed, such as when testing OTA
   doc["uptime"] = millis();
-  String now = timeClient.getFormattedTime(); 
+  //String now = timeClient.getFormattedTime(); 
   //Time.format("%Y-%m-%d %H:%M:%S");
-  doc["bootTime"] = bootTime;
-  doc["bootTimeEpoch"] = bootTimeEpoch;
-  doc["hubTime"] = now;
+  //doc["boot_time"] = bootTime;
+  doc["boot_time_epoch"] = bootTimeEpoch;
+  //doc["hub_time"] = now;
   // ---- end of debug info
   String topicName = String(config.ownerId) + "/hub/" + config.hubId + "/status";
   String message;
@@ -1064,7 +1144,7 @@ void sendStatus() {
   }
 }
 
-// return 0 if success, >= 1 if failure
+// return 0 if success, non-zero if failure
 int hubPublish(const char* topic, const char* message) {
   int ret;
 #ifdef ENABLE_AWS_IOT 
@@ -1073,12 +1153,13 @@ int hubPublish(const char* topic, const char* message) {
 #elif defined(ENABLE_MQTT)
   ESP_LOGD(TAG, "mqttClient.publish: %s: %s", topic, message);
   if (!mqttClient.connected()) {
-    ESP_LOGE(TAG, "mqttClient.publish: error: not connected");    
+    ESP_LOGE(TAG, "mqttClient.publish: error: not connected");  
+    setLastError(errPublish); // errReason "mqttDisconnected"
     return 1;
   }
   bool rc = mqttClient.beginPublish(topic, strlen(message), false);  
   if (!rc)  {
-    ESP_LOGE(TAG, "mqttClient.beginPublish failed: rc=%d, state=%d\n", rc, mqttClient.state());
+    ESP_LOGE(TAG, "mqttClient.beginPublish failed: rc=%d, state=%d", rc, mqttClient.state());
   } else {
     int remainingLength = strlen(message);
     while (remainingLength > 0) {
@@ -1086,28 +1167,31 @@ int hubPublish(const char* topic, const char* message) {
       int offset = strlen(message)-remainingLength;
       rc = mqttClient.write((const byte*)&message[offset], toSend);
       if (!rc) {
-        ESP_LOGE(TAG, "mqttClient.write failed: rc=%d, state=%d\n", rc, mqttClient.state());    
+        ESP_LOGE(TAG, "mqttClient.write failed: rc=%d, state=%d", rc, mqttClient.state());    
         // use goto because it simplifies logic and makes processing
         //  less error prone
         goto do_return;
       }
-      //ESP_LOGD(TAG, "mqttClient.write: wrote %d bytes from offset %d\n", toSend, offset);    
+      //ESP_LOGD(TAG, "mqttClient.write: wrote %d bytes from offset %d", toSend, offset);    
       remainingLength -= toSend;      
     } 
     rc = mqttClient.endPublish();
     if (!rc) {
-      ESP_LOGE(TAG, "mqttClient.endPublish failed: rc=%d, state=%d\n", rc, mqttClient.state());    
+      ESP_LOGE(TAG, "mqttClient.endPublish failed: rc=%d, state=%d", rc, mqttClient.state());
     }      
   }    
   do_return:
   if (!rc) {
-    ESP_LOGE(TAG, "mqttClient publishing failed: rc=%d, state=%d\n", rc, mqttClient.state());
+    ESP_LOGE(TAG, "mqttClient publishing failed: rc=%d, state=%d", rc, mqttClient.state());
   }
   ret = rc ? 0:1;
 #endif ENABLE_AWS_IOT    
   if (!ret) {
     // blink if publish success
     blueLed.Blink(10, 10);
+  }
+  if (ret) {
+    setLastError(errPublish);    
   }
   return ret;
 }
@@ -1159,6 +1243,9 @@ void sendDeviceInfo() {
   }
 }
 
+void serializeLong(long long lval, char* buffer) {
+  sprintf(buffer, "%lld", lval);
+}
 
 void sendSensorValues(unsigned long time) {
   if (config.consoleEnabled) {
@@ -1175,7 +1262,8 @@ void sendSensorValues(unsigned long time) {
         Component &c = d.component(j);
         if (c.dir() == 'i') {
           String compId = String(d.id()) + '-' + c.idSuffix();
-          doc[compId] = c.value();
+          float dval = atof(c.value());
+          doc[compId] = dval;
           valueCount++;
         }
       }
@@ -1298,7 +1386,7 @@ void freezeWithError() {
 // *******************
 void displayFreeHeap(const char* title) {
 #if LOG_LOCAL_LEVEL >= ESP_LOG_VERBOSE
-  ESP_LOGD(TAG, "displayFreeHeap at %s (%d)\n", timeClient.getFormattedTime() , millis());
+  ESP_LOGD(TAG, "displayFreeHeap at %s (%d)", timeClient.getFormattedTime() , millis());
   Serial.print(title);  
   Serial.printf("\nHeap size: %d\n", ESP.getHeapSize());
   Serial.printf("Free Heap: %d\n", heap_caps_get_free_size(MALLOC_CAP_8BIT));
@@ -1360,6 +1448,19 @@ class HubIdCallbacks : public BLECharacteristicCallbacks {
     ESP_LOGI(TAG,  "%s", config.hubId);      
   }
 };
+
+class ConsoleEnabledCallbacks: public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *characteristic) {
+    uint16_t value = arrToUint16(characteristic->getData());
+    bool bvalue = value != 0;
+    if (config.consoleEnabled != bvalue) {
+      dirty = true;
+      config.consoleEnabled = bvalue;
+    }
+    ESP_LOGI(TAG,  "ConsoleEnabledCallbacks.onWrite: %d", config.consoleEnabled);      
+  }
+};
+
 
 class MqttUserCallbacks: public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *characteristic) {
@@ -1429,7 +1530,7 @@ class CmdCallbacks : public BLECharacteristicCallbacks {
       bleMode++;
       swReboot = 2;
     } else {
-      ESP_LOGE(TAG, "BLE command not recognized: %s\n", value.c_str());      
+      ESP_LOGE(TAG, "BLE command not recognized: %s", value.c_str());      
     }
   }
 };
@@ -1449,7 +1550,7 @@ class HubCertCallbacks : public BLECharacteristicCallbacks {
     //Serial.println(strlen(config.thingCrt));
     //Serial.printf("HubCertCallbacks: %d %s", strlen(config.thingCrt), config.thingCrt);
     //Serial.printf("HubCertCallbacks: current length=%d\n", strlen(config.thingCrt));
-    ESP_LOGI(TAG, "HubCertCallbacks: current length=%d\n", strlen(config.thingCrt));
+    ESP_LOGI(TAG, "HubCertCallbacks: current length=%d", strlen(config.thingCrt));
   }
 };
 
@@ -1467,7 +1568,7 @@ class HubKeyCallbacks : public BLECharacteristicCallbacks {
     }
     //Serial.println(strlen(config.thingPrivateKey));
     //Serial.printf("HubKeyCallbacks: current length=%d\n", strlen(config.thingPrivateKey));
-    ESP_LOGI(TAG, "HubKeyCallbacks: current length=%d\n", strlen(config.thingPrivateKey));
+    ESP_LOGI(TAG, "HubKeyCallbacks: current length=%d", strlen(config.thingPrivateKey));
   }
 };
 
@@ -1497,6 +1598,13 @@ void startBLE() {
   characteristic = service->createCharacteristic(HUB_ID_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
   characteristic->setCallbacks(new HubIdCallbacks());
   characteristic->setValue(config.hubId);  
+  
+  characteristic = service->createCharacteristic(CONSOLE_ENABLED_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
+  characteristic->setCallbacks(new ConsoleEnabledCallbacks());
+  // convert bool to int so that we can set charactrstc value
+  int ival = config.consoleEnabled ? 1:0;
+  characteristic->setValue(ival);
+
   characteristic = service->createCharacteristic(BLE_CMD_UUID, BLECharacteristic::PROPERTY_WRITE);
   characteristic->setCallbacks(new CmdCallbacks());
 
