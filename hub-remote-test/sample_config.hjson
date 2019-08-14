@@ -5,8 +5,16 @@ ca_path: cert/AmazonRootCA1.pem
 cert_path: cert/thing-certificate.pem.crt
 key_path: cert/thing-private.pem.key
 serial_port: /dev/ttyX
-useMqtt: false
-mqttServer: postman.cloudmqtt.com
-mqttPort: 13125
-mqttUser: someUser
-mqttPassword: somePassword
+use_mqtt: false
+mqtt_server: sensaurus.iotan.org
+mqtt_port: 1883
+mqtt_user: sensaurus
+mqtt_password: <request password from peterm>
+# use this value to request hub to send data
+send_interval: 5.0
+
+# debugging section
+# set to true if sending of actuators in test should not be done
+no_actuator_send: false
+# if set and > 0, will request req_status every n seconds
+req_status_interval: 0

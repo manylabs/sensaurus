@@ -6,6 +6,7 @@ import time
 import json
 import hjson
 import random
+import threading
 
 
 class Tester(object):
@@ -23,17 +24,17 @@ class Tester(object):
         self.mqttc = paho.Client("remote_test-%d" % os.getpid())
         self.mqttc.on_connect = self.on_connect
         self.mqttc.on_message = self.on_message
-        if not self.config.get('useMqtt'):
+        if not self.config.get('use_mqtt'):
             # use aws iot
             self.mqttc.tls_set(self.config['ca_path'], certfile=self.config['cert_path'], keyfile=self.config['key_path'],
                           cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLSv1_2, ciphers=None)
             self.mqttc.connect(self.config['host'], 8883, keepalive=60)
         else:
             # use plain mqtt
-            mqttUser = self.config['mqttUser']
-            mqttPassword = self.config['mqttPassword']
-            self.mqttc.username_pw_set(mqttUser, mqttPassword)
-            self.mqttc.connect(self.config['mqttServer'], int(self.config['mqttPort']), keepalive=60)
+            mqtt_user = self.config['mqtt_user']
+            mqtt_password = self.config['mqtt_password']
+            self.mqttc.username_pw_set(mqtt_user, mqtt_password)
+            self.mqttc.connect(self.config['mqtt_server'], int(self.config['mqtt_port']), keepalive=60)
 
         self.mqttc.loop_start()
         self.mqttc.subscribe('%s/hub/%s/status' % (self.config['owner_id'], self.config['hub_id']))
@@ -95,21 +96,38 @@ class Tester(object):
         print('sending %d actuator values to %s' % (len(actuator_values), topic_name))
         self.mqttc.publish(topic_name, json.dumps(actuator_values))
 
+    def send_req_status(self):
+        interval = self.config.get('req_status_interval')
+        if interval:
+            t = threading.Timer(interval, self.send_req_status)
+            t.daemon = True
+            t.start()
+        if self.connected:
+            self.send_command('req_status')
+
     # simulate a polling loop
     def run(self):
+
         while True:
             time.sleep(1.0)
             if self.connected:
                 if not self.config_sent:
                     self.config_sent = True
-                    self.send_command('set_send_interval', {'send_interval': 1.0})
-                    self.send_command('req_status')
+                    send_interval = self.config.get('send_interval')
+                    if not send_interval:
+                        send_interval = 1.0
+                    self.send_command('set_send_interval', {'send_interval': send_interval})
+                    #self.send_command('req_status')
+                    self.send_req_status()
                     self.send_command('req_devices')
-                if self.config.get('no_actuator_send') and self.test_component_ids:
+                #if self.test_component_ids:
+                if not self.config.get('no_actuator_send') and self.test_component_ids:
                     actuator_values = {comp_id: random.randint(0, 1) for comp_id in self.test_component_ids}
                     self.set_actuators(actuator_values)
             else:
                 print('waiting for connection...')
+
+
 
 
 # load config and connect to the MQTT service (broker)
