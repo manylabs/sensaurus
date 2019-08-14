@@ -38,6 +38,7 @@ function startConnect() {
       $('#wifiPassword').val(sensaurusBle.wifiPassword);
       $('#ownerId').val(sensaurusBle.ownerId);
       $('#hubId').val(sensaurusBle.hubId);
+      $('#consoleEnabled').val(sensaurusBle.consoleEnabled);
       $('#mqttUser').val(sensaurusBle.mqttUser);
       $('#mqttPassword').val(sensaurusBle.mqttPassword);
       $('#mqttServer').val(sensaurusBle.mqttServer);
@@ -69,6 +70,7 @@ function saveSettings() {
   sensaurusBle.wifiPassword = $('#wifiPassword').val();
   sensaurusBle.ownerId = $('#ownerId').val();
   sensaurusBle.hubId = $('#hubId').val();
+  sensaurusBle.consoleEnabled = $('#consoleEnabled').val();
   sensaurusBle.mqttUser = $('#mqttUser').val();
   sensaurusBle.mqttPassword = $('#mqttPassword').val();
   sensaurusBle.mqttServer = $('#mqttServer').val();
@@ -124,6 +126,7 @@ $( "#reconnectButton" ).click(function() {
       $('#wifiPassword').val(sensaurusBle.wifiPassword);
       $('#ownerId').val(sensaurusBle.ownerId);
       $('#hubId').val(sensaurusBle.hubId);
+      $('#consoleEnabled').val(sensaurusBle.consoleEnabled);
       $('#mqttUser').val(sensaurusBle.mqttUser);
       $('#mqttPassword').val(sensaurusBle.mqttPassword);
       $('#mqttServer').val(sensaurusBle.mqttServer);

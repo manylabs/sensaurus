@@ -22,6 +22,7 @@ var WIFI_NETWORK_UUID  = "e2ccd120-412f-4a99-922b-aca100637e2a";
 var WIFI_PASSWORD_UUID = "30db3cd0-8eb1-41ff-b56a-a2a818873c34";
 var OWNER_ID_UUID      = "af74141f-3c60-425a-9402-62ec79b58c1a";
 var HUB_ID_UUID        = "e4636699-367b-4838-a421-1904cf95f869";
+var CONSOLE_ENABLED_UUID = "ead80ccd-47b6-406d-99f2-a67ec2783858";
 var BLE_CMD_UUID       = "93311ce4-a1e4-11e9-a3dc-60f81dcdd3b6";
 
 // mqtt service
@@ -70,6 +71,7 @@ async function writeChunkedCharacteristics() {
 // Utility functions
 //*******************************************************************
 
+// Converts int16 to array of 2 bytes, in Big Endian order
 function toBytesInt16 (num) {
     arr = new ArrayBuffer(2); // an Int16 takes 2 bytes
     view = new DataView(arr);
@@ -146,6 +148,7 @@ function toBytesInt16 (num) {
             this._cacheCharacteristic(service, WIFI_PASSWORD_UUID),
             this._cacheCharacteristic(service, OWNER_ID_UUID),
             this._cacheCharacteristic(service, HUB_ID_UUID),
+            this._cacheCharacteristic(service, CONSOLE_ENABLED_UUID),
             this._cacheCharacteristic(service, BLE_CMD_UUID),
           ])
         }),
@@ -225,33 +228,40 @@ function toBytesInt16 (num) {
               this._readCharacteristicValue(HUB_ID_UUID)
               .then( value => {
                 this.hubId = decoder.decode(value);
-                this._readCharacteristicValue(MQTT_USER_UUID)
-                .then(value => {
-                  this.mqttUser = decoder.decode(value);
-                  this._readCharacteristicValue(MQTT_PASSWORD_UUID)
+                this._readCharacteristicValue(CONSOLE_ENABLED_UUID)
+                .then( value => {
+                  // unlike on the server where consoleEnabled is bool,
+                  //   on the client it's integer 0 or 1
+                  var ival = new Int16Array(value.buffer)[0];
+                  this.consoleEnabled = ival;
+                  this._readCharacteristicValue(MQTT_USER_UUID)
                   .then(value => {
-                    this.mqttPassword = decoder.decode(value);
-                    this._readCharacteristicValue(MQTT_SERVER_UUID)
+                    this.mqttUser = decoder.decode(value);
+                    this._readCharacteristicValue(MQTT_PASSWORD_UUID)
                     .then(value => {
-                      this.mqttServer = decoder.decode(value);
-                      //resolve("done");
-                      this._readCharacteristicValue(MQTT_PORT_UUID)
+                      this.mqttPassword = decoder.decode(value);
+                      this._readCharacteristicValue(MQTT_SERVER_UUID)
                       .then(value => {
+                        this.mqttServer = decoder.decode(value);
+                        //resolve("done");
+                        this._readCharacteristicValue(MQTT_PORT_UUID)
+                        .then(value => {
 
-                        // value.getUint16(): 17715
-                        //   vs. Int16Array(value.buffer)[0] 13125
-                        //this.mqttPort = value.getUint16();
-                        // Int16Array works as a work-around and returns the correct value
-                        // it's because of the endian:
-                        //    getUint16 is using Big Endian
-                        //    Int16Array is using Little Endian
-                        // 51*256+69
-                        // = 13125
-                        // 51+69*256
-                        // = 17715
+                          // value.getUint16(): 17715
+                          //   vs. Int16Array(value.buffer)[0] 13125
+                          //this.mqttPort = value.getUint16();
+                          // Int16Array works as a work-around and returns the correct value
+                          // it's because of the endian:
+                          //    getUint16 is using Big Endian
+                          //    Int16Array is using Little Endian
+                          // 51*256+69
+                          // = 13125
+                          // 51+69*256
+                          // = 17715
 
-                        this.mqttPort = new Int16Array(value.buffer)[0];
-                        resolve("done");
+                          this.mqttPort = new Int16Array(value.buffer)[0];
+                          resolve("done");
+                        });
                       });
                     });
                   });
@@ -292,22 +302,27 @@ function toBytesInt16 (num) {
       console.log("saveSettings values=", this.wifiNetwork, pw, this.ownerId, this.hubId);
       // promise to save core service characteristics
       const p0 = new Promise((resolve, reject) => {
-        var p = this._writeCharacteristicValue(WIFI_NETWORK_UUID, this._encodeString(this.wifiNetwork));
-        p.then(() => {
-          p = this._writeCharacteristicValue(WIFI_PASSWORD_UUID, this._encodeString(this.wifiPassword));
-          p.then(() => {
-            p = this._writeCharacteristicValue(OWNER_ID_UUID, this._encodeString(this.ownerId));
-            p.then(() => {
+        this._writeCharacteristicValue(WIFI_NETWORK_UUID, this._encodeString(this.wifiNetwork))
+        .then(() => {
+          this._writeCharacteristicValue(WIFI_PASSWORD_UUID, this._encodeString(this.wifiPassword))
+          .then(() => {
+            this._writeCharacteristicValue(OWNER_ID_UUID, this._encodeString(this.ownerId))
+            .then(() => {
               this._writeCharacteristicValue(HUB_ID_UUID, this._encodeString(this.hubId))
               .then(() => {
-                writeChunkedCharacteristics()
+                // boolean value encoded as int16
+                var consoleEnabled = toBytesInt16(this.consoleEnabled);
+                this._writeCharacteristicValue(CONSOLE_ENABLED_UUID, consoleEnabled)
                 .then(() => {
-                  console.log("saveSettings done writeChunkedCharacteristics");
-                  resolve();
-                })
-                .catch(error => {
-                  console.log("saveSettings failed saving core service characteristics: ", error);
-                  reject(error);
+                  writeChunkedCharacteristics()
+                  .then(() => {
+                    console.log("saveSettings done writeChunkedCharacteristics");
+                    resolve();
+                  })
+                  .catch(error => {
+                    console.log("saveSettings failed saving core service characteristics: ", error);
+                    reject(error);
+                  });
                 });
               });
             });
