@@ -40,13 +40,10 @@
 #define FIRMWARE_VERSION_MINOR 18
 #define MAX_DEVICE_COUNT 6
 //peters
-//#define CONSOLE_BAUD 9600
+#define CONSOLE_BAUD 9600
 // peterm
-#define CONSOLE_BAUD 115200
-// peters
+//#define CONSOLE_BAUD 115200
 #define DEV_BAUD 38400
-// peterm
-//#define DEV_BAUD 9600
 #define SERIAL_BUFFER_SIZE 120
 
 // Note: for BLE to build, maximum_size specified in boards.txt needs to be adjusted from 1310720 to:
@@ -480,8 +477,8 @@ void setup() {
   // Use ESP_LOG_WARN, ESP_LOG_INFO, ESP_LOG_DEBUG, ESP_LOG_VERBOSE to get less or more verbosity
   // A good value for production release is ESP_LOG_WARN or ESP_LOG_INFO
   // peters: set to WARN/INFO for production
-  esp_log_level_set("*", ESP_LOG_VERBOSE);
-  esp_log_level_set(TAG, ESP_LOG_VERBOSE);
+  esp_log_level_set("*", ESP_LOG_WARN);
+  esp_log_level_set(TAG, ESP_LOG_INFO);
   displayFreeHeap("setup start");
   
   // init. bleMode persistent variable if needed 
@@ -841,8 +838,6 @@ void waitForResponse(int deviceIndex) {
   unsigned long startTime = millis();
   do {
     char c = (char) ser.readByte(config.responseTimeout);
-    // peters    
-    // TODO: if non-ascii, try inserting 5ms sleep and retry
     if (c < 32) {
       break;
     } else {
@@ -882,10 +877,10 @@ void processMessageFromDevice(int deviceIndex) {
   if (checksumOk(deviceMessage, true) == 0) {
     if (config.consoleEnabled) {
       //peters: use Serial instead of trace
-      //Serial.printf("e:checksum error on plug %d\n", deviceIndex + 1);
+      Serial.printf("e:checksum error on plug %d\n", deviceIndex + 1);
     }
-    //peters: remove this
-    ESP_LOGE(TAG, "e:checksum error on plug %d: %s", deviceIndex + 1, deviceMessage);      
+    //peterm: using this for observing checksum errors when console disabled
+    //ESP_LOGE(TAG, "e:checksum error on plug %d: %s", deviceIndex + 1, deviceMessage);      
     setLastError(errChecksum);
     return;
   }
@@ -1105,7 +1100,7 @@ void sendStatus() {
   doc["wifi_network"] = config.wifiNetwork;
   doc["version"] = config.version;
   // peters: disable for production
-  doc["minor_version"] = FIRMWARE_VERSION_MINOR;
+  //doc["minor_version"] = FIRMWARE_VERSION_MINOR;
   // host is constant for now and is not needed
   //doc["host"] = HOST_ADDRESS;
   // useful for testing OTA, wifi bug tracking etc.
