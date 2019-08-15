@@ -17,7 +17,7 @@ public:
 
 	CheckStream(Stream &stream) : m_stream(stream) {
 		m_crc = 0xffff;
-		#ifdef USE USE_CHECK_STREAM_BUFFER
+		#ifdef USE_CHECK_STREAM_BUFFER
 			m_bufferIndex = 0;
 		#endif
 	}
