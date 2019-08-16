@@ -38,7 +38,7 @@ static const unsigned int MQTT_PORT = 1883;
 static auto constexpr WIFI_SSID = "network name";
 static auto constexpr WIFI_PASSWORD = "password";
 static auto constexpr HOST_ADDRESS = "x.amazonaws.com";
-static auto constexpr CLIENT_ID = "foo";  // policy name
+static auto constexpr CLIENT_ID = "foo";  // AWS thing name; should be unique for each hub
 
 // "AWS root CA1 and C2 (RSA)", see
 // https://docs.aws.amazon.com/iot/latest/developerguide/managing-device-certs.html#server-authentication

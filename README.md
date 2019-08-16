@@ -159,7 +159,14 @@ We communicate with the devices using 38400 baud half-duplex serial. The hub pol
 
 ## Uploading Device Code
 
-Use the Arduino IDE with the `Arduino Pro or Pro Mini` selected in the board menu. Check the orientation of your FTDI board.
+To upload code to one of the prototype devices, you'll need an FTDI board 
+(e.g. [https://www.sparkfun.com/products/9716](https://www.sparkfun.com/products/9716)).
+
+1.  Install FTDI drivers if needed. 
+2.  Connect the FTDI device to the Arduino Pro Mini with the correct orientation (possibly upside down). GND should connect to GND.
+3.  In the Arduino IDE, select `Arduino Pro or Pro Mini` from the board menu.
+4.  Select the serial port that shows up after connecting the FTDI board to your computer.
+5.  Use the upload function in the Arduino IDE.
 
 ## Building with Changed Partitions
 

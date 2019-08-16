@@ -56,7 +56,7 @@ static const char *TAG = "AWS_IOT";
 char AWS_IOT_HOST_ADDRESS[128];
 
 AWS_IoT_Client client;
-IoT_Publish_Message_Params paramsQOS0;
+IoT_Publish_Message_Params paramsQOS1;
 pSubCallBackHandler_t subApplCallBackHandler = 0;
 
 void aws_iot_task(void *param);
@@ -189,12 +189,12 @@ int AWS_IOT::publish(const char *pubtopic,const char *pubPayLoad)
 {
     IoT_Error_t rc;
 
-    paramsQOS0.qos = QOS0;
-    paramsQOS0.payload = const_cast<char*>(pubPayLoad);
-    paramsQOS0.isRetained = 0;
+    paramsQOS1.qos = QOS1;
+    paramsQOS1.payload = const_cast<char*>(pubPayLoad);
+    paramsQOS1.isRetained = 0;
 
-    paramsQOS0.payloadLen = strlen(pubPayLoad);
-    rc = aws_iot_mqtt_publish(&client, pubtopic, strlen(pubtopic), &paramsQOS0);
+    paramsQOS1.payloadLen = strlen(pubPayLoad);
+    rc = aws_iot_mqtt_publish(&client, pubtopic, strlen(pubtopic), &paramsQOS1);
 
     return rc;
 }
@@ -208,7 +208,7 @@ int AWS_IOT::subscribe(const char *subTopic, pSubCallBackHandler_t pSubCallBackH
     subApplCallBackHandler = pSubCallBackHandler;
 
     ESP_LOGI(TAG, "Subscribing...");
-    rc = aws_iot_mqtt_subscribe(&client, subTopic, strlen(subTopic), QOS0, iot_subscribe_callback_handler, nullptr);
+    rc = aws_iot_mqtt_subscribe(&client, subTopic, strlen(subTopic), QOS1, iot_subscribe_callback_handler, nullptr);
     if(SUCCESS != rc) {
         ESP_LOGE(TAG, "Error subscribing : %d ", rc);
         return rc;
