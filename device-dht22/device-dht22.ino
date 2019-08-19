@@ -80,9 +80,9 @@ void processIncomingByte(char c) {
 
 
 void processMessage(char *cmd, char *args[], int argCount) {
-  pinMode(COMM_PIN, OUTPUT);
-  digitalWrite(COMM_PIN, HIGH);  // make sure we're not accidentally sending something that looks like a start bit
   #ifdef DELAY_RESPONSE
+    pinMode(COMM_PIN, OUTPUT);
+    digitalWrite(COMM_PIN, HIGH);  // make sure we're not accidentally sending something that looks like a start bit
     delay(5);
   #endif
 
