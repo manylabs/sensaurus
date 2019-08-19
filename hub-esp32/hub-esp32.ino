@@ -559,7 +559,7 @@ void setup() {
   // connect to AWS MQTT
   // note: some AWS IoT code based on https://github.com/jandelgado/esp32-aws-iot
   if (!bleMode && status == WL_CONNECTED ) {
-    if (awsConn.connect(HOST_ADDRESS, CLIENT_ID, aws_root_ca_pem, config.thingCrt, config.thingPrivateKey) == 0) {
+    if (awsConn.connect(HOST_ADDRESS, config.hubId, aws_root_ca_pem, config.thingCrt, config.thingPrivateKey) == 0) {
       Serial.println("connected to AWS");
       awsIotConnected = true;
       delay(200);  // wait a moment before subscribing
