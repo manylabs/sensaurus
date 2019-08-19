@@ -1,5 +1,6 @@
-#include "SoftwareSerialWithHalfDuplex.h"
 #define USE_CHECK_STREAM_BUFFER
+//#define DELAY_RESPONSE
+#include "SoftwareSerialWithHalfDuplex.h"
 #include "CheckStream.h"
 #include "Sensaur.h"
 #include "DHT.h"
@@ -58,7 +59,7 @@ void loop() {
 
 
 void processIncomingByte(char c) {
-  if (c == 10 || c == 13) {
+  if (c == 13) {  // respond after second part of newline
     if (messageIndex) {
       message[messageIndex] = 0;
       char *args[MAX_ARGS];
@@ -70,7 +71,7 @@ void processIncomingByte(char c) {
       messageIndex = 0;
     }
   } else {
-    if (messageIndex < MESSAGE_BUF_LEN) {
+    if (messageIndex < MESSAGE_BUF_LEN && c != 10) {  // exclude first part of newline
       message[messageIndex] = c;
       messageIndex++;
     }
@@ -79,6 +80,11 @@ void processIncomingByte(char c) {
 
 
 void processMessage(char *cmd, char *args[], int argCount) {
+  pinMode(COMM_PIN, OUTPUT);
+  digitalWrite(COMM_PIN, HIGH);  // make sure we're not accidentally sending something that looks like a start bit
+  #ifdef DELAY_RESPONSE
+    delay(5);
+  #endif
 
   // query current values
   if (strcmp(cmd, "v") == 0) {
