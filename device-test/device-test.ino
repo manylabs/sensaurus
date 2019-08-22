@@ -1,3 +1,4 @@
+#define USE_CHECK_STREAM_BUFFER
 #include "SoftwareSerialWithHalfDuplex.h"
 #include "CheckStream.h"
 #include "Sensaur.h"
@@ -53,7 +54,7 @@ void loop() {
 
 
 void processIncomingByte(char c) {
-  if (c == 10 || c == 13) {
+  if (c == 13) {  // respond after second part of newline
     if (messageIndex) {
       message[messageIndex] = 0;
       char *args[MAX_ARGS];
@@ -65,7 +66,7 @@ void processIncomingByte(char c) {
       messageIndex = 0;
     }
   } else {
-    if (messageIndex < MESSAGE_BUF_LEN) {
+    if (messageIndex < MESSAGE_BUF_LEN && c != 10) {  // exclude first part of newline
       message[messageIndex] = c;
       messageIndex++;
     }
