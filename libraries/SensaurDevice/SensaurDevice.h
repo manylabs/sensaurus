@@ -69,6 +69,10 @@ public:
 	inline int noResponseCount() const { return m_noResponseCount; }
 	inline void noResponse() { m_noResponseCount++; }
 	inline void responded() { m_noResponseCount = 0; }
+	inline void resetErrorCount() { m_errorCount = 0;}
+	// returns true if switched to holdoff state
+	bool incErrorCount();
+	inline int getErrorCount() const { return m_errorCount; }
 
 	// component access
 	inline int componentCount() const { return m_componentCount; }
@@ -82,6 +86,8 @@ private:
 	bool m_connected;
 	int m_componentCount;
 	int m_noResponseCount;
+	// checksum error count
+	int m_errorCount;
 	Component m_components[MAX_COMPONENT_COUNT];
 };
 

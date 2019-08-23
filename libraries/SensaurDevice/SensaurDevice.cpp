@@ -104,3 +104,11 @@ void Device::setId(const char *id) {
 void Device::setVersion(const char *version) {
 	strncpy(m_version, version, 10);
 }
+
+bool Device::incErrorCount() { 
+	m_errorCount++;  
+	if (m_errorCount >= 3) {
+		return true;
+	}	
+	return false;
+}

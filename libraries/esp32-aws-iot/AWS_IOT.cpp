@@ -138,7 +138,8 @@ void iot_subscribe_callback_handler(AWS_IoT_Client *pClient, char *topicName, ui
         return rc; //abort();
     }
 
-    connectParams.keepAliveIntervalInSec = 10;
+    // original value was 10
+    connectParams.keepAliveIntervalInSec = 60;
     connectParams.isCleanSession = true;
     connectParams.MQTTVersion = MQTT_3_1_1;
     /* Client ID is set in the menuconfig of the example */

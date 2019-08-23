@@ -3,6 +3,7 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include "AWS_IOT.h"
+#include "aws_iot_error.h"
 // set this in PubSubClient.h: #define MQTT_KEEPALIVE 60
 #include "PubSubClient.h"
 #include "jled.h"
@@ -258,7 +259,9 @@ bool mqttReconnect() {
     clientId += String(config.hubId);
     // Attempt to connect
     if (mqttClient.connect(clientId.c_str(),config.mqttUser, config.mqttPassword)) {
-      Serial.println("connected");
+      if (config.consoleEnabled) {
+        Serial.println("connected");        
+      }
       // prep topic names
       String topicName = String(config.ownerId) + "/hub/" + config.hubId + "/command";
       strcpy(commandTopicName, topicName.c_str());
@@ -699,6 +702,8 @@ void loop() {
       }      
     }
   }  
+#elif defined(ENABLE_AWS_IOT)
+  // TODO: add reconnect code for AWS_IOT
 #endif  
   // process any incoming data from the hub computer
   while (Serial.available()) {
@@ -833,11 +838,15 @@ void waitForResponse(int deviceIndex) {
   SimpleHubSerial &ser = devSerial[deviceIndex];
   ser.startRead();
   deviceMessageIndex = 0;
+  char nonAsciiChar = 0;
 
   // read a message into our buffer
   unsigned long startTime = millis();
   do {
     char c = (char) ser.readByte(config.responseTimeout);
+    if (c > 127) {
+      nonAsciiChar = c;
+    }
     if (c < 32) {
       break;
     } else {
@@ -847,6 +856,10 @@ void waitForResponse(int deviceIndex) {
     }
   } while (millis() - startTime < config.responseTimeout);  // put this at end so we're less likely to miss first character coming back form device
   ser.endRead();
+  Device &d = devices[deviceIndex];
+  if (!nonAsciiChar) {
+    d.resetErrorCount();    
+  }
 
   // process the message
   if (deviceMessageIndex) {
@@ -858,6 +871,7 @@ void waitForResponse(int deviceIndex) {
     }
     deviceMessage[deviceMessageIndex] = 0;
     processMessageFromDevice(deviceIndex);
+    // TODO: don't mark as responded if message was corrupt (non-ascii char received)
     devices[deviceIndex].responded();
   } else {
     devices[deviceIndex].noResponse();
@@ -877,11 +891,12 @@ void processMessageFromDevice(int deviceIndex) {
   if (checksumOk(deviceMessage, true) == 0) {
     if (config.consoleEnabled) {
       //peters: use Serial instead of trace
-      Serial.printf("e:checksum error on plug %d\n", deviceIndex + 1);
+      //Serial.printf("e:checksum error on plug %d\n", deviceIndex + 1);
     }
     //peterm: using this for observing checksum errors when console disabled
-    //ESP_LOGE(TAG, "e:checksum error on plug %d: %s", deviceIndex + 1, deviceMessage);      
+    ESP_LOGE(TAG, "e:checksum error on plug %d: %s", deviceIndex + 1, deviceMessage);      
     setLastError(errChecksum);
+    devices[deviceIndex].incErrorCount();
     return;
   }
 
@@ -1094,7 +1109,7 @@ void updateActuators(DynamicJsonDocument &doc) {
 
 void sendStatus() {
   if (config.consoleEnabled) {
-    Serial.print("sending status: ");
+    Serial.println("sending status");
   }
   DynamicJsonDocument doc(256);
   doc["wifi_network"] = config.wifiNetwork;
@@ -1131,11 +1146,12 @@ void sendStatus() {
   serializeJson(doc, message);
   if (pubsubEnabled) {
     if (hubPublish(topicName.c_str(), message.c_str())) {
+      // peters: 
       Serial.println("error publishing");
     }
   }  
   if (config.consoleEnabled) {
-    Serial.println("done");
+    Serial.println("done sending status");
   }
 }
 
@@ -1144,7 +1160,26 @@ int hubPublish(const char* topic, const char* message) {
   int ret;
 #ifdef ENABLE_AWS_IOT 
   ESP_LOGD(TAG, "awsConn.publish: %s: %s", topic, message);
-  ret = awsConn.publish(topic, message);
+  const int MAX_AWS_IOT_RETRIES = 3;
+  const int AWS_IOT_RETRY_DELAY = 20;  
+  int retries = 0;
+
+  // retry loop for mqtt client is not idle: wait a few millis till mqtt client is clear to send
+  while(true) {
+    ret = awsConn.publish(topic, message);
+    // process retry loop only on not idle error
+    if (ret != MQTT_CLIENT_NOT_IDLE_ERROR) {
+      break;
+    }
+    if (retries >= MAX_AWS_IOT_RETRIES) {
+      ESP_LOGE(TAG, "awsConn.publish: %d retries failed on MQTT_CLIENT_NOT_IDLE_ERROR error", retries);
+      break;
+    }
+    delay(AWS_IOT_RETRY_DELAY);
+    retries++;
+    ESP_LOGW(TAG, "awsConn.publish: retry #%d", retries);
+  } 
+  
 #elif defined(ENABLE_MQTT)
   ESP_LOGD(TAG, "mqttClient.publish: %s: %s", topic, message);
   if (!mqttClient.connected()) {
@@ -1187,6 +1222,7 @@ int hubPublish(const char* topic, const char* message) {
   }
   if (ret) {
     setLastError(errPublish);    
+    ESP_LOGE(TAG, "sendStatus: failed in publish to %s: ret=%d", topic, ret);         
   }
   return ret;
 }
@@ -1257,8 +1293,13 @@ void sendSensorValues(unsigned long time) {
         Component &c = d.component(j);
         if (c.dir() == 'i') {
           String compId = String(d.id()) + '-' + c.idSuffix();
-          float dval = atof(c.value());
-          doc[compId] = dval;
+          // peterm
+          if (d.getErrorCount()) {
+            doc[compId+"_err"] = d.getErrorCount();
+          } else {
+            // peterm
+            doc[compId] = atof(c.value());            
+          }
           valueCount++;
         }
       }
