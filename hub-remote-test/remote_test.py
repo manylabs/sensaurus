@@ -51,8 +51,8 @@ class Tester(object):
             message = json.loads(msg.payload)
             if not 'wifi_network' in message:
                 print('**** wifi_network missing from status')
-            if not 'host' in message:
-                print('**** host missing from status')
+            #if not 'host' in message:
+            #    print('**** host missing from status')
             print("%s status:" % (time.asctime()))
             print(message)
         elif msg.topic.endswith('sensors'):
