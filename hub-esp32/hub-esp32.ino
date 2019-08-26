@@ -911,7 +911,7 @@ void processMessageFromDevice(int deviceIndex) {
     int argIndex = 0;
     for (int i = 0; i < dev.componentCount(); i++) {
       Component &c = dev.component(i);
-      if (c.dir() == 'i' && argIndex < argCount) {
+      if (argIndex < argCount) {
         c.setValue(args[argIndex]);
         argIndex++;
       }
@@ -1291,17 +1291,15 @@ void sendSensorValues(unsigned long time) {
     if (d.connected()) {
       for (int j = 0; j < d.componentCount(); j++) {
         Component &c = d.component(j);
-        if (c.dir() == 'i') {
-          String compId = String(d.id()) + '-' + c.idSuffix();
+        String compId = String(d.id()) + '-' + c.idSuffix();
+        // peterm
+        if (d.getErrorCount()) {
+          doc[compId+"_err"] = d.getErrorCount();
+        } else {
           // peterm
-          if (d.getErrorCount()) {
-            doc[compId+"_err"] = d.getErrorCount();
-          } else {
-            // peterm
-            doc[compId] = atof(c.value());            
-          }
-          valueCount++;
+          doc[compId] = atof(c.value());
         }
+        valueCount++;
       }
     }
   }
