@@ -83,6 +83,10 @@ void processMessage(char *cmd, char *args[], int argCount) {
     hubStream.print(val1);
     hubStream.print(',');
     hubStream.print(val2);
+    hubStream.print(',');
+    hubStream.print(val1);
+    hubStream.print(',');
+    hubStream.print(val2);
     hubStream.println();
     delay(20);
     digitalWrite(ARD_LED_PIN, LOW);

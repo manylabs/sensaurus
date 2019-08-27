@@ -26,6 +26,7 @@ byte messageIndex = 0;
 
 
 // other globals
+int relayState = 0;
 unsigned long deviceId = 0;
 
 
@@ -77,18 +78,19 @@ void processMessage(char *cmd, char *args[], int argCount) {
 
   // query current values
   if (strcmp(cmd, "v") == 0) {
-    hubStream.print("v");  // reply with no data
+    hubStream.print("v:");
+    hubStream.print(relayState);
     hubStream.println();
 
   // set values
   } else if (strcmp(cmd, "s") == 0 && argCount >= 1) {
-    int val = atoi(args[0]);
-    digitalWrite(RELAY_PIN, val);
-    digitalWrite(RED_PIN, val);
-    digitalWrite(GREEN_PIN, val);
-    digitalWrite(BLUE_PIN, val);
+    relayState = atoi(args[0]);
+    digitalWrite(RELAY_PIN, relayState);
+    digitalWrite(RED_PIN, relayState);
+    digitalWrite(GREEN_PIN, relayState);
+    digitalWrite(BLUE_PIN, relayState);
     hubStream.print("s:");
-    hubStream.print(val);
+    hubStream.print(relayState);
     hubStream.println();  
 
   // query metadata
