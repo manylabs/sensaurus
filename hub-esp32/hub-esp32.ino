@@ -1160,8 +1160,14 @@ int hubPublish(const char* topic, const char* message) {
   int ret;
 #ifdef ENABLE_AWS_IOT 
   ESP_LOGD(TAG, "awsConn.publish: %s: %s", topic, message);
-  const int MAX_AWS_IOT_RETRIES = 3;
-  const int AWS_IOT_RETRY_DELAY = 20;  
+  // equidistance retry delays: 3*20=60ms for 3 retries
+  // growing retry delays:
+  // 5+10+15+20=50ms for 4 retries
+  // growing delay retry works better since retry #2 is very rare with QOS0
+  // equidistance retry delays are better for QOS1, but overall this approach results 
+  //   in 50x worse failure rate (1.5 failure per hour vs. 1 failure in 10 hours)
+  const int MAX_AWS_IOT_RETRIES = 4;
+  const int AWS_IOT_RETRY_DELAY = 5;
   int retries = 0;
 
   // retry loop for mqtt client is not idle: wait a few millis till mqtt client is clear to send
@@ -1175,8 +1181,9 @@ int hubPublish(const char* topic, const char* message) {
       ESP_LOGE(TAG, "awsConn.publish: %d retries failed on MQTT_CLIENT_NOT_IDLE_ERROR error", retries);
       break;
     }
-    delay(AWS_IOT_RETRY_DELAY);
     retries++;
+    // consecutive retry interval will be:  5,10,15,20ms for 4 retries
+    delay(retries*AWS_IOT_RETRY_DELAY);
     ESP_LOGW(TAG, "awsConn.publish: retry #%d", retries);
   } 
   

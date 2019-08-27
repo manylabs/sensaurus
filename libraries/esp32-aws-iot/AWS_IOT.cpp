@@ -51,6 +51,7 @@ and that both those copyright notices and this permission notice appear in suppo
 #include "driver/sdmmc_host.h"
 
 
+static const QoS USED_QOS = QOS0;
 
 static const char *TAG = "AWS_IOT";
 char AWS_IOT_HOST_ADDRESS[128];
@@ -190,7 +191,7 @@ int AWS_IOT::publish(const char *pubtopic,const char *pubPayLoad)
 {
     IoT_Error_t rc;
 
-    paramsQOS1.qos = QOS1;
+    paramsQOS1.qos = USED_QOS;
     paramsQOS1.payload = const_cast<char*>(pubPayLoad);
     paramsQOS1.isRetained = 0;
 
@@ -209,7 +210,7 @@ int AWS_IOT::subscribe(const char *subTopic, pSubCallBackHandler_t pSubCallBackH
     subApplCallBackHandler = pSubCallBackHandler;
 
     ESP_LOGI(TAG, "Subscribing...");
-    rc = aws_iot_mqtt_subscribe(&client, subTopic, strlen(subTopic), QOS1, iot_subscribe_callback_handler, nullptr);
+    rc = aws_iot_mqtt_subscribe(&client, subTopic, strlen(subTopic), USED_QOS, iot_subscribe_callback_handler, nullptr);
     if(SUCCESS != rc) {
         ESP_LOGE(TAG, "Error subscribing : %d ", rc);
         return rc;
