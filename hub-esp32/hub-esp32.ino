@@ -12,6 +12,11 @@
 #include "WiFiUdp.h"
 #include "ArduinoJson.h"
 #include "SimpleHubSerial.h"
+// enabled the next line to use SoftwareSerial interrupt based serial communication instead of SimpleHubSerial
+//#define USE_SWSERIAL
+#ifdef USE_SWSERIAL
+#include "SoftwareSerial.h"
+#endif
 #include "CheckStream.h"
 #include "Sensaur.h"
 #include "SensaurDevice.h"
@@ -40,10 +45,7 @@
 #define FIRMWARE_VERSION 3
 #define FIRMWARE_VERSION_MINOR 18
 #define MAX_DEVICE_COUNT 6
-//peters
 #define CONSOLE_BAUD 9600
-// peterm
-//#define CONSOLE_BAUD 115200
 #define DEV_BAUD 38400
 #define SERIAL_BUFFER_SIZE 120
 
@@ -423,6 +425,18 @@ void dumpConfig(const Config* c) {
 }
 #define EEPROM_SIZE sizeof(Config)
 
+#ifdef USE_SWSERIAL  
+// serial connections to each device
+SoftwareSerial devSerial[] = {
+  SoftwareSerial(SERIAL_PIN_1),
+  SoftwareSerial(SERIAL_PIN_2),
+  SoftwareSerial(SERIAL_PIN_3),
+  SoftwareSerial(SERIAL_PIN_4),
+  SoftwareSerial(SERIAL_PIN_5),
+  SoftwareSerial(SERIAL_PIN_6),
+};
+
+#else
 // serial connections to each device
 SimpleHubSerial devSerial[] = {
   SimpleHubSerial(SERIAL_PIN_1),
@@ -432,6 +446,7 @@ SimpleHubSerial devSerial[] = {
   SimpleHubSerial(SERIAL_PIN_5),
   SimpleHubSerial(SERIAL_PIN_6),
 };
+#endif // USE_SWSERIAL  
 
 
 // serial connections wrapped with objects that add checksums to outgoing messages
@@ -790,12 +805,34 @@ void loop() {
 // loop through all the devices, requesting a value from each one
 void doPolling() {
   for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
+    Device &d = devices[i];
+#ifdef USE_SWSERIAL  
+    SoftwareSerial &ser = devSerial[i];
+    char ch;
+    if (d.componentCount()) {      
+      // request values (if any)
+      ch = 'v';
+    } else {
+      // request metadata if not yet received
+      ch = 'm';
+    }
+    ESP_LOGD(TAG, "doPolling: request %c from #%d (%s)", ch, i+1, d.id());   
+    // flush octets leftover from previous response which may have arrived after available() check
+    ser.flush();
+    ser.println(ch);
+    //ser.write(ch);
+    ser.enableTx(false);
+    waitForResponseSwSerial(i);
+    ser.enableTx(true);
+#else
+    
     if (devices[i].componentCount()) {
       devStream[i].println('v');  // request values (if any)
     } else {
       devStream[i].println('m');  // request metadata if not yet received
     }
     waitForResponse(i);
+#endif // USE_SWSERIAL    
   }
 }
 
@@ -833,7 +870,55 @@ void handleIncomingMessage(char *topicName, int payloadLen, char *payLoad) {
   }
 }
 
+#ifdef USE_SWSERIAL  
+void waitForResponseSwSerial(int deviceIndex) {
+  SoftwareSerial &ser = devSerial[deviceIndex];
+  deviceMessageIndex = 0;
+  // read a message into our buffer
+  unsigned long startTime = millis();
+  //bool corruptedMessage = false;
+  char nonAsciiChar = 0;
 
+  do {
+    if (ser.available()) {
+      char c = (char) ser.read();
+      if (c > 127) {
+        nonAsciiChar = c;
+      }
+      if (c < 32) {
+        break;
+      } else {
+        if (deviceMessageIndex < DEVICE_MESSAGE_BUF_LEN - 1) {
+          deviceMessage[deviceMessageIndex++] = c;
+        }
+      }
+    }
+  } while (millis() - startTime < config.responseTimeout);  // put this at end so we're less likely to miss first character coming back form device
+  ESP_LOGD(TAG, "waitForResponseSwSerial: #%d received %d octets", deviceIndex+1, deviceMessageIndex);
+  Device &d = devices[deviceIndex];
+  if (deviceMessageIndex) {
+    deviceMessage[deviceMessageIndex] = 0;
+  }
+  if (!nonAsciiChar) {
+    d.resetErrorCount();
+  }
+ 
+  if (deviceMessageIndex) {
+    Device &d = devices[deviceIndex];
+    if (d.connected() == false) {
+      d.setConnected(true);
+      d.responded();  // reset the no-response counter
+      d.resetComponents();  // clear out all the components until we get a meta-data message
+    }
+    deviceMessage[deviceMessageIndex] = 0;
+    processMessageFromDevice(deviceIndex);
+    // TODO: don't mark as responded if message was corrupt
+    devices[deviceIndex].responded();
+  } else {
+    devices[deviceIndex].noResponse();
+  }    
+}
+#else
 void waitForResponse(int deviceIndex) {
   SimpleHubSerial &ser = devSerial[deviceIndex];
   ser.startRead();
@@ -877,7 +962,7 @@ void waitForResponse(int deviceIndex) {
     devices[deviceIndex].noResponse();
   }
 }
-
+#endif // USE_SWSERIAL
 
 void processMessageFromDevice(int deviceIndex) {
 
@@ -911,7 +996,7 @@ void processMessageFromDevice(int deviceIndex) {
     int argIndex = 0;
     for (int i = 0; i < dev.componentCount(); i++) {
       Component &c = dev.component(i);
-      if (argIndex < argCount) {
+      if (c.dir() == 'i' && argIndex < argCount) {
         c.setValue(args[argIndex]);
         argIndex++;
       }
@@ -1043,7 +1128,11 @@ void runCommand(const char *command, DynamicJsonDocument &doc) {
       Serial.println(command + 2);
     }
     devStream[deviceIndex].println(command + 2);
+#ifdef USE_SWSERIAL
+    ESP_LOGE(TAG, "send a message to a specific device not implemented for USE_SWSERIAL");
+#else
     waitForResponse(deviceIndex);
+#endif // USE_SWSERIAL    
   } else if (!strcmp(command, BLE_CMD_BLE_START)) { // startBLE: reboot into BLE mode
       // mark unit for software reboot (start BLE mode)
       bleMode++;
@@ -1064,11 +1153,15 @@ void updateActuators(DynamicJsonDocument &doc) {
   // loop over devices; we'll send a message to each one (that has updated actuators)
   for (int deviceIndex = 0; deviceIndex < MAX_DEVICE_COUNT; deviceIndex++) {
     Device &d = devices[deviceIndex];
+    if (!d.componentCount()) {
+      //ESP_LOGI(TAG, "updateActuators: skipping update for inactive plug %d", deviceIndex+1);
+      continue;
+    }
     bool deviceUpdated = false;  // will be made true if the incoming message specified a new value for any component of this device
-
     // look for any new actuator values for this device
     for (JsonPair p : obj) {
       String componentId(p.key().c_str());
+      //"7F339B15-out 1"
       int dashPos = componentId.indexOf('-');
       String deviceId = componentId.substring(0, dashPos);
       if (deviceId == d.id()) {  // probably faster to use C string comparison
@@ -1078,6 +1171,7 @@ void updateActuators(DynamicJsonDocument &doc) {
           if (idSuffix == c.idSuffix()) {  // probably faster to use C string comparison rather than create a String object on the fly
             c.setActuatorValue(p.value());
             deviceUpdated = true;
+            //ESP_LOGI(TAG, "updateActuators: deviceUpdated=true for %s", idSuffix.c_str());            
           }
         }
       }
@@ -1085,7 +1179,31 @@ void updateActuators(DynamicJsonDocument &doc) {
 
     // if we updated this device, send a message to it
     // we construct the message containing a value for each output component, in the order specified via the device metadata
+#ifdef USE_SWSERIAL
     if (deviceUpdated) {
+      //ESP_LOGD(TAG, "updateActuators: performing actuator update for plug %d", deviceIndex+1);            
+      SoftwareSerial &ser = devSerial[deviceIndex];
+      ser.flush();
+      ser.print("s:");
+      bool first = true;
+      for (int i = 0; i < d.componentCount(); i++) {
+        Component &c = d.component(i);
+        if (c.dir() == 'o') {
+          if (first == false) {
+            ser.print(',');
+          }
+          ser.print(c.actuatorValue());
+          first = false;
+        }
+      }
+      ser.println();
+      ser.enableTx(false);
+      waitForResponseSwSerial(deviceIndex);
+      ser.enableTx(true);
+    }      
+#else
+    if (deviceUpdated) {
+      //ESP_LOGD(TAG, "updateActuators: performing actuator update for plug %d", deviceIndex+1);            
       Stream &s = devStream[deviceIndex];
       s.print("s:");
       bool first = true;
@@ -1102,6 +1220,7 @@ void updateActuators(DynamicJsonDocument &doc) {
       s.println();
       waitForResponse(deviceIndex);
     }
+#endif // USE_SWSERIAL    
   }
 }
 
@@ -1147,7 +1266,7 @@ void sendStatus() {
   if (pubsubEnabled) {
     if (hubPublish(topicName.c_str(), message.c_str())) {
       // peters: 
-      Serial.println("error publishing");
+      //Serial.println("error publishing");
     }
   }  
   if (config.consoleEnabled) {
@@ -1229,7 +1348,7 @@ int hubPublish(const char* topic, const char* message) {
   }
   if (ret) {
     setLastError(errPublish);    
-    ESP_LOGE(TAG, "sendStatus: failed in publish to %s: ret=%d", topic, ret);         
+    ESP_LOGE(TAG, "hubPublish: failed in publish to %s: ret=%d", topic, ret);
   }
   return ret;
 }
