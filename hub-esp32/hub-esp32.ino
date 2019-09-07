@@ -12,13 +12,14 @@
 #include "WiFiUdp.h"
 #include "ArduinoJson.h"
 #include "SimpleHubSerial.h"
-// enabled the next line to use SoftwareSerial interrupt based serial communication instead of SimpleHubSerial
-//#define USE_SWSERIAL
+// enable the next line to use SoftwareSerial interrupt based serial communication instead of SimpleHubSerial
+#define USE_SWSERIAL
 #ifdef USE_SWSERIAL
 #include "SoftwareSerial.h"
 #endif
 #include "CheckStream.h"
 #include "Sensaur.h"
+#include "ProcessingQueue.h"
 #include "SensaurDevice.h"
 #include "settings.h"
 
@@ -200,6 +201,10 @@ static int errLastTs = 0;
 static int errCount = 0;
 // last error code
 static int errLastErrorCode = 0;
+// total mqtt incoming messages
+static int mqttInCount = 0;
+// total mqtt outgoing messages
+static int mqttOutCount = 0;
 
 static void setLastError(int erroCode) {
   errLastTs = millis();
@@ -210,6 +215,8 @@ static void setLastError(int erroCode) {
 
 auto blueLed = JLed(2);
 
+// async processing of MQTT requests
+static ProcessingQueue *processingQueue;
 
 // *******************
 // Utility functions * 
@@ -490,7 +497,6 @@ unsigned long lastMemoryDisplay = 0;
 
 // run once on startup
 void setup() {
-
   // uncomment this line to get more information from components during debugging
   // Use ESP_LOG_WARN, ESP_LOG_INFO, ESP_LOG_DEBUG, ESP_LOG_VERBOSE to get less or more verbosity
   // A good value for production release is ESP_LOG_WARN or ESP_LOG_INFO
@@ -511,6 +517,7 @@ void setup() {
   // prepare serial connections
   Serial.begin(CONSOLE_BAUD);
   Serial.println();
+  processingQueue = new ProcessingQueue();  
   initConfig();
   Serial.println("starting");
   for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
@@ -657,6 +664,28 @@ void loop() {
 #ifdef ENABLE_OTA
   ArduinoOTA.handle();
 #endif
+
+  // if some items in queue, process one item
+  if (processingQueue->count() > 0) {
+    DynamicJsonDocument doc(256);
+    QueueItem item = processingQueue->try_pop();
+    ESP_LOGD(TAG, "processing pop: request type=%d", item.requestType);
+    switch (item.requestType) {
+      case REQUEST_MQTT_PUBLISH_STATUS:
+        sendStatus();        
+        break;
+      case REQUEST_ACTUATOR_SET:
+        // small delay to avoid checksum error
+        delay(10);
+        deserializeJson(doc, item.payload);
+        updateActuators(doc);
+        break;
+      case REQUEST_NONE:
+        ESP_LOGW(TAG, "processing queue failed in try_pop");
+        break;
+    }
+  }
+
 #ifdef ENABLE_MQTT
    mqttClient.loop();
   if (pubsubEnabled) {
@@ -859,15 +888,33 @@ void mqttMessageHandler(char* topic, byte *payload, unsigned int length) {
   handleIncomingMessage(topic, length, (char*)payload);  
 }
 
-void handleIncomingMessage(char *topicName, int payloadLen, char *payLoad) {
+void handleIncomingMessage(char *topicName, int payloadLen, char *payLoad) {  
+  // payLoad is not null terminated:
+  // {"7F339B15-out 1": 1, "7F339B15-out 2": 0}abled":0}  
+  // It is also modified by deserializeJson(), inserting additional '\0' chars
+  // therefore, we copy it into newly allocated buffer and terminate it, just in case
+  //ESP_LOGI(TAG, "handleIncomingMessage: payLoad=%s", payLoad);      
+  // payload string is modified by deserializeJson(), therefore save it before modification for later use.
+  // assume payLoad buffer must not be modfied and create a local copy that also has a null string terminator
+  char* buffer = new char[payloadLen+1];
+  strncpy(buffer, payLoad, payloadLen);
+  buffer[payloadLen] = '\0';
+  String savedPayload = String(buffer);
   DynamicJsonDocument doc(256);
-  deserializeJson(doc, payLoad);
+  deserializeJson(doc, buffer);
   if (doc.containsKey("command")) {
     String command = doc["command"];
     runCommand(command.c_str(), doc);
   } else {
-    updateActuators(doc);
+    if (!processingQueue->try_push(QueueItem(REQUEST_ACTUATOR_SET, savedPayload))) {
+      ESP_LOGD(TAG, "handleIncomingMessage: can't push REQUEST_ACTUATOR_SET to processing queue: the queue is full");      
+    }
+    //updateActuators will be invoked upon processingQueue->try_pop
+    //updateActuators(doc);
   }
+  // free previously allocated buffer
+  delete []buffer;
+  mqttInCount++;
 }
 
 #ifdef USE_SWSERIAL  
@@ -1084,7 +1131,10 @@ void runCommand(const char *command, DynamicJsonDocument &doc) {
       startBLE();
     #endif
   } else if (strcmp(command, "req_status") == 0) {  // request a status message
-    sendStatus();
+    //sendStatus();
+    if (!processingQueue->try_push(QueueItem(REQUEST_MQTT_PUBLISH_STATUS))) {
+      ESP_LOGE(TAG, "runCommand: can't push REQUEST_MQTT_PUBLISH_STATUS: the queue is full");      
+    }
   } else if (strcmp(command, "req_devices") == 0) {  // request a devices message
     sendDeviceInfo();
   } else if (strcmp(command, "set_console_enabled") == 0) { // set log level
@@ -1248,7 +1298,9 @@ void sendStatus() {
   doc["err_code"] = errLastErrorCode;
   
   doc["poll_interval"] = pollInterval;
-  
+  doc["mqttIn"] = mqttInCount;
+  doc["mqttOut"] = mqttOutCount;
+
   // local IP needed for OTA
   String localIp = String(WiFi.localIP().toString());
   doc["local_ip"] = localIp;
@@ -1349,6 +1401,8 @@ int hubPublish(const char* topic, const char* message) {
   if (ret) {
     setLastError(errPublish);    
     ESP_LOGE(TAG, "hubPublish: failed in publish to %s: ret=%d", topic, ret);
+  } else {
+    mqttOutCount++;
   }
   return ret;
 }
