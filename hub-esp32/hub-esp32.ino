@@ -676,7 +676,7 @@ void loop() {
         break;
       case REQUEST_ACTUATOR_SET:
         // small delay to avoid checksum error
-        delay(10);
+        delay(5);
         deserializeJson(doc, item.payload);
         updateActuators(doc);
         break;
@@ -835,6 +835,10 @@ void loop() {
 void doPolling() {
   for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
     Device &d = devices[i];
+    if (i==0) {
+        // small delay on first device to avoid checksum error
+        delay(5);      
+    }
 #ifdef USE_SWSERIAL  
     SoftwareSerial &ser = devSerial[i];
     char ch;

@@ -71,9 +71,9 @@ public:
     int peek() override;
     int read() override;
     /// The readBytes functions are non-waiting, there is no timeout.
-    size_t readBytes(uint8_t* buffer, size_t size) override;
+    size_t readBytes(uint8_t* buffer, size_t size);
     /// The readBytes functions are non-waiting, there is no timeout.
-    size_t readBytes(char* buffer, size_t size) override {
+    size_t readBytes(char* buffer, size_t size) {
         return readBytes(reinterpret_cast<uint8_t*>(buffer), size);
     }
     void flush() override;
