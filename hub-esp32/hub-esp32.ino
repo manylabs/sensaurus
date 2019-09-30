@@ -493,6 +493,7 @@ NTPClient timeClient(ntpUDP);
 unsigned long lastEpochSeconds = 0;  // seconds since epoch start (from NTP)
 unsigned long lastTimeUpdate = 0;  // msec since boot
 unsigned long lastMemoryDisplay = 0;
+unsigned long lastWifiConnectionAttempt = 0;
 
 
 // run once on startup
@@ -550,34 +551,32 @@ void setup() {
         }
         retries++;
       } else {
-          Serial.println("connected to wifi");   
-          Serial.println("IP address: ");
-          Serial.println(WiFi.localIP());
-          while (WiFi.status() != WL_CONNECTED) {
-            delay(100);
-            Serial.print(".");
-          }
-          
-          Serial.println("after WiFi.status() wait: IP address: ");
-          Serial.println(WiFi.localIP());
-          
+        Serial.println("connected to wifi");   
+        Serial.println("IP address: ");
+        Serial.println(WiFi.localIP());
+        while (WiFi.status() != WL_CONNECTED) {
+          delay(100);
+          Serial.print(".");
+        }
+        Serial.println("after WiFi.status() wait: IP address: ");
+        Serial.println(WiFi.localIP());
       }
     }
   } else {
     Serial.println("wifiEnabled is false: not connected to wifi.");    
   }
-  
-  setStatusLED(HIGH);
 
   // see if config button is pressed
   if (digitalRead(BUTTON_PIN) == LOW) {
     Serial.println("config button pressed: switching to ble mode");
     bleMode = true;
   }
+#ifdef ENABLE_BLE
   if (status != WL_CONNECTED) {
     Serial.println("wifi not connected - forcing ble mode");
     bleMode = true;
   }
+#endif
   Serial.printf("bleMode=%d\n", bleMode);
   bool awsIotConnected = false;
 #ifdef ENABLE_AWS_IOT 
@@ -602,22 +601,20 @@ void setup() {
     } else {
       Serial.println("failed to connect to AWS");
       setLastError(errAwsIotConnect);
-      //freezeWithError();
+      freezeWithError();
     }
   } else {
-      Serial.println("Skipped connecting to AWS IOT");    
+    Serial.println("Skipped connecting to AWS IOT");    
+    freezeWithError();
   }
   
 #elif defined(ENABLE_MQTT)
   mqttClient.setServer(config.mqttServer, config.mqttPort);
   mqttClient.setCallback(mqttMessageHandler);
-  
   bool rc = mqttReconnect();
-  
   pubsubEnabled = true;     
 #endif // ENABLE_AWS_IOT 
-  
-  
+   
   if (!awsIotConnected) {
   // if AWS IOT is not connected, we have enough memory to run BLE
   // we could use pubsubEnabled instead of awsIotConnected if we wanted to disabled  BLE
@@ -686,8 +683,95 @@ void loop() {
     }
   }
 
+  // check WiFi/MQTT connections
+  checkNetwork();
+
+  // process any incoming data from the hub computer
+  while (Serial.available()) {
+    processByteFromComputer(Serial.read());
+  }
+
+  // yield to other tasks to allow AWS messages to be received
+  taskYIELD();
+
+  // handle reboot request
+  if (swReboot) {
+    Serial.println("Rebooting on request...");
+    // wait for BLE processing to settle
+    delay(500);
+    esp_restart();    
+  }
+
+  // do device polling
+  if (pollInterval) {
+    unsigned long time = millis();
+    if (time - lastPollTime > pollInterval) {
+      doPolling();
+      if (lastPollTime) {
+        lastPollTime += pollInterval;  // increment poll time so we don't drift
+      } else {
+        lastPollTime = time;  // unless this is the first time polling
+      }
+    }
+
+    // check for device disconnects
+    time = millis();
+    for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
+      Device &d = devices[i];
+      if (d.connected() && d.noResponseCount() >= 2) {
+        d.setConnected(false);
+        d.resetComponents();  // we use component count to decide whether to request; might as well request metadata rather than values on disconnected devices
+        digitalWrite(ledPin[i], LOW);
+        sendDeviceInfo();   
+      }
+    }
+  }
+
+  // send current sensor values to server
+  unsigned long time = millis();
+  if (sendInterval) {
+    if (time - lastSendTime > sendInterval) {
+      sendSensorValues(time);
+      if (lastSendTime) {
+        lastSendTime += sendInterval;  // increment send time so we don't drift
+      } else {
+        lastSendTime = time;  // unless this is the first time sending
+      }
+    }
+  }
+  
+  // check for BLE config button (button will be LOW when pressed)
+  if ((digitalRead(BUTTON_PIN) == LOW) && configMode == false) {
+    Serial.println("Button pressed.");
+    configMode = true;
+    bleMode++;
+    Serial.printf("bleMode=%d\n", bleMode);
+    delay(100);
+    esp_restart();
+  }
+  if (configMode) {
+    ledcWrite(0, (millis() >> 3) & 255);  // fade LED when in config mode
+  }
+
+  // display memory usage
+  if (config.consoleEnabled) {
+    if (time - lastMemoryDisplay > 5 * 60 * 1000) {
+      displayFreeHeap("loop");
+      lastMemoryDisplay = time;
+    }
+  }
+
+  // get network time once an hour
+  if (time - lastTimeUpdate > 1000 * 60 * 60) {
+    updateTime();
+  }
+  blueLed.Update();
+}
+
+
+void checkNetwork() {
 #ifdef ENABLE_MQTT
-   mqttClient.loop();
+  mqttClient.loop();
   if (pubsubEnabled) {
     if (!mqttClient.connected() || mqttClient.state() != MQTT_CONNECTED) {
       unsigned long time = millis();
@@ -743,91 +827,20 @@ void loop() {
           // TODO: allow 10 more seconds for wifi fully connect before retrying.
           lastMqttConnectionAttempt += 15000;
         }
-      }      
+      }
     }
   }  
 #elif defined(ENABLE_AWS_IOT)
-  // TODO: add reconnect code for AWS_IOT
-#endif  
-  // process any incoming data from the hub computer
-  while (Serial.available()) {
-    processByteFromComputer(Serial.read());
-  }
-
-  // yield to other tasks to allow AWS messages to be received
-  taskYIELD();
-  
-  if (swReboot) {
-    Serial.println("Rebooting on request...");
-    // wait for BLE processing to settle
-    delay(500);
-    esp_restart();    
-  }
-
-  // do polling
-  if (pollInterval) {
+  if (WiFi.status() != WL_CONNECTED) {
     unsigned long time = millis();
-    if (time - lastPollTime > pollInterval) {
-      doPolling();
-      if (lastPollTime) {
-        lastPollTime += pollInterval;  // increment poll time so we don't drift
-      } else {
-        lastPollTime = time;  // unless this is the first time polling
-      }
+    if (time - lastWifiConnectionAttempt > 15000) {  // only try to reconnect once every 15 seconds
+      Serial.println("trying to reconnect to wifi");
+      ESP_LOGE(TAG, "mqttReconnect: Wifi.status() is not WL_CONNECTED (0), but %d. WIFI may have disconnected because of router reboot or a problem with hub. Restarting WiFi connection...", wifiStatus);          
+      WiFi.begin(config.wifiNetwork, config.wifiPassword);
+      lastWifiConnectionAttempt = time;
     }
-
-    // check for disconnects
-    time = millis();
-    for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
-      Device &d = devices[i];
-      if (d.connected() && d.noResponseCount() >= 2) {
-        d.setConnected(false);
-        d.resetComponents();  // we use component count to decide whether to request; might as well request metadata rather than values on disconnected devices
-        digitalWrite(ledPin[i], LOW);
-        sendDeviceInfo();   
-      }
-    }
-  }
-
-  // send current sensor values to server
-  unsigned long time = millis();
-  if (sendInterval) {
-    if (time - lastSendTime > sendInterval) {
-      sendSensorValues(time);
-      if (lastSendTime) {
-        lastSendTime += sendInterval;  // increment send time so we don't drift
-      } else {
-        lastSendTime = time;  // unless this is the first time sending
-      }
-    }
-  }
-  
-  // check for BLE config button (button will be LOW when pressed)
-  if ((digitalRead(BUTTON_PIN) == LOW) && configMode == false) {
-    Serial.println("Button pressed.");
-    configMode = true;
-    bleMode++;
-    Serial.printf("bleMode=%d\n", bleMode);
-    delay(100);
-    esp_restart();
-  }
-  if (configMode) {
-    ledcWrite(0, (millis() >> 3) & 255);  // fade LED when in config mode
-  }
-
-  // display memory usage
-  if (config.consoleEnabled) {
-    if (time - lastMemoryDisplay > 5 * 60 * 1000) {
-      displayFreeHeap("loop");
-      lastMemoryDisplay = time;
-    }
-  }
-
-  // get network time once an hour
-  if (time - lastTimeUpdate > 1000 * 60 * 60) {
-    updateTime();
-  }
-  blueLed.Update();
+  }  
+#endif
 }
 
 
@@ -1321,8 +1334,7 @@ void sendStatus() {
   serializeJson(doc, message);
   if (pubsubEnabled) {
     if (hubPublish(topicName.c_str(), message.c_str())) {
-      // peters: 
-      //Serial.println("error publishing");
+      Serial.printf("error publishing; wifi status: %d\n", WiFi.status());
     }
   }  
   if (config.consoleEnabled) {
@@ -1436,7 +1448,7 @@ void sendDeviceInfo() {
       if (config.wifiEnabled) {
         String message = String("{\"hub_id\":\"") + config.hubId + "\"}";
         if (hubPublish(topicName.c_str(), message.c_str())) {  // send hub ID for this device
-          Serial.println("error publishing");
+          Serial.printf("error publishing; wifi status: %d\n", WiFi.status());
         }
       }
       deviceCount++;
@@ -1449,7 +1461,7 @@ void sendDeviceInfo() {
       Serial.printf("sending device info; size: %d\n", json.length());
     }
     if (hubPublish(topicName.c_str(), json.c_str())) {  // send list of device info dictionaries
-      Serial.printf("error publishing; message size: %d\n", json.length());
+      Serial.printf("error publishing; wifi status: %d; message size: %d\n", WiFi.status(), json.length());
     }
   }
   if (config.consoleEnabled) {
@@ -1476,13 +1488,12 @@ void sendSensorValues(unsigned long time) {
       for (int j = 0; j < d.componentCount(); j++) {
         Component &c = d.component(j);
         String compId = String(d.id()) + '-' + c.idSuffix();
-        // peterm
-        if (d.getErrorCount()) {
-          doc[compId+"_err"] = d.getErrorCount();
-        } else {
-          // peterm
-          doc[compId] = atof(c.value());
-        }
+        #ifdef SEND_ERROR_COUNT
+          if (d.getErrorCount()) {
+            doc[compId+"_err"] = d.getErrorCount();
+          }
+        #endif
+        doc[compId] = atof(c.value());
         valueCount++;
       }
     }
@@ -1492,7 +1503,7 @@ void sendSensorValues(unsigned long time) {
   serializeJson(doc, message);
   if (config.wifiEnabled) {
     if (hubPublish(topicName.c_str(), message.c_str())) {
-      Serial.println("error publishing");
+      Serial.printf("error publishing; wifi status: %d\n", WiFi.status());
     }
   }
   if (config.consoleEnabled) {
