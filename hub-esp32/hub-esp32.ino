@@ -498,6 +498,7 @@ unsigned long lastWifiConnectionAttempt = 0;
 
 // run once on startup
 void setup() {
+
   // uncomment this line to get more information from components during debugging
   // Use ESP_LOG_WARN, ESP_LOG_INFO, ESP_LOG_DEBUG, ESP_LOG_VERBOSE to get less or more verbosity
   // A good value for production release is ESP_LOG_WARN or ESP_LOG_INFO
@@ -534,77 +535,77 @@ void setup() {
   ledcSetup(0, 5000, 8);  // set up channel 0 to use 5000 Hz with 8 bit resolution
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
-  // connect to wifi  
-  int status = WL_IDLE_STATUS;
-  if (config.wifiEnabled) {
-    int retries = 0;
-    while (status != WL_CONNECTED) {
-      // enable onEvent call if need to trace detailed wifi behavior
-      // use wifi event to establish asynchronously that wifi has been connected and IP is known
-      WiFi.onEvent(WiFiEvent);      
-      status = WiFi.begin(config.wifiNetwork, config.wifiPassword);
-      if (status != WL_CONNECTED) {
-        delay(2000);
-        if (retries >= MAX_WIFI_RETRIES) {
-          Serial.printf("failed connecting to wifi %s\n", config.wifiNetwork);
-          break;
-        }
-        retries++;
-      } else {
-        Serial.println("connected to wifi");   
-        Serial.println("IP address: ");
-        Serial.println(WiFi.localIP());
-        while (WiFi.status() != WL_CONNECTED) {
-          delay(100);
-          Serial.print(".");
-        }
-        Serial.println("after WiFi.status() wait: IP address: ");
-        Serial.println(WiFi.localIP());
-      }
-    }
-  } else {
-    Serial.println("wifiEnabled is false: not connected to wifi.");    
-  }
-
   // see if config button is pressed
   if (digitalRead(BUTTON_PIN) == LOW) {
     Serial.println("config button pressed: switching to ble mode");
     bleMode = true;
   }
+
+  // for now we only run in BLE mode or wifi+mqtt mode; we don't want to do both
 #ifdef ENABLE_BLE
-  if (status != WL_CONNECTED) {
-    Serial.println("wifi not connected - forcing ble mode");
-    bleMode = true;
+  if (bleMode) {
+    startBLE(); 
+    return;     
   }
-#endif
-  Serial.printf("bleMode=%d\n", bleMode);
-  bool awsIotConnected = false;
+#endif // ENABLE_BLE
+
+  // if wifi is not enabled, stop here
+  if (config.wifiEnabled == false) {
+    Serial.println("wifiEnabled is false: not connected to wifi.");
+    return;
+  }
+
+  // connect to wifi  
+  int status = WL_IDLE_STATUS;
+  int retries = 0;
+  while (status != WL_CONNECTED) {
+    // enable onEvent call if need to trace detailed wifi behavior
+    // use wifi event to establish asynchronously that wifi has been connected and IP is known
+    WiFi.onEvent(WiFiEvent);      
+    status = WiFi.begin(config.wifiNetwork, config.wifiPassword);
+    if (status != WL_CONNECTED) {
+      delay(2000);
+      if (retries >= MAX_WIFI_RETRIES) {
+        Serial.printf("failed connecting to wifi %s\n", config.wifiNetwork);
+        break;
+      }
+      retries++;
+    } else {
+      Serial.println("connected to wifi");   
+      Serial.println("IP address: ");
+      Serial.println(WiFi.localIP());
+      while (WiFi.status() != WL_CONNECTED) {
+        delay(100);
+        Serial.print(".");
+      }
+      Serial.println("after WiFi.status() wait: IP address: ");
+      Serial.println(WiFi.localIP());
+    }
+  }
+  if (status != WL_CONNECTED) {
+    freezeWithError();
+  }
+
 #ifdef ENABLE_AWS_IOT 
   // connect to AWS MQTT
   // note: some AWS IoT code based on https://github.com/jandelgado/esp32-aws-iot
-  if (!bleMode && status == WL_CONNECTED ) {
-    if (awsConn.connect(HOST_ADDRESS, config.hubId, aws_root_ca_pem, config.thingCrt, config.thingPrivateKey) == 0) {
-      Serial.println("connected to AWS");
-      awsIotConnected = true;
-      delay(200);  // wait a moment before subscribing
+  if (awsConn.connect(HOST_ADDRESS, config.hubId, aws_root_ca_pem, config.thingCrt, config.thingPrivateKey) == 0) {
+    Serial.println("connected to AWS");
+    delay(200);  // wait a moment before subscribing
 
-      // prep topic names
-      String topicName = String(config.ownerId) + "/hub/" + config.hubId + "/command";
-      strcpy(commandTopicName, topicName.c_str());
-      topicName = String(config.ownerId) + "/hub/" + config.hubId + "/actuators";
-      strcpy(actuatorsTopicName, topicName.c_str());
+    // prep topic names
+    String topicName = String(config.ownerId) + "/hub/" + config.hubId + "/command";
+    strcpy(commandTopicName, topicName.c_str());
+    topicName = String(config.ownerId) + "/hub/" + config.hubId + "/actuators";
+    strcpy(actuatorsTopicName, topicName.c_str());
 
-      // do subscriptions
-      subscribe(commandTopicName);
-      subscribe(actuatorsTopicName);
-      pubsubEnabled = true;
-    } else {
-      Serial.println("failed to connect to AWS");
-      setLastError(errAwsIotConnect);
-      freezeWithError();
-    }
+    // do subscriptions
+    subscribe(commandTopicName);
+    subscribe(actuatorsTopicName);
+    pubsubEnabled = true;
   } else {
-    Serial.println("Skipped connecting to AWS IOT");    
+    Serial.println("failed to connect to AWS");
+    setLastError(errAwsIotConnect);
     freezeWithError();
   }
   
@@ -614,43 +615,24 @@ void setup() {
   bool rc = mqttReconnect();
   pubsubEnabled = true;     
 #endif // ENABLE_AWS_IOT 
-   
-  if (!awsIotConnected) {
-  // if AWS IOT is not connected, we have enough memory to run BLE
-  // we could use pubsubEnabled instead of awsIotConnected if we wanted to disabled  BLE
-  //  when both aws iot and simple mqtt are up.
-  //if (!pubsubEnabled) {
-    Serial.println("Enabling BLE.");
-    bleMode++;
-  }
-#ifdef ENABLE_BLE
-  if (bleMode) {
-    startBLE();      
-  }
-#endif // ENABLE_BLE
 
-  if (status == WL_CONNECTED) {
-
-    // get network time
-    timeClient.begin();
-    timeClient.setTimeOffset(0);  // we want UTC
-    updateTime();
-    bootTime = timeClient.getFormattedTime(); 
-    bootTimeEpoch = timeClient.getEpochTime();
+  // get network time
+  timeClient.begin();
+  timeClient.setTimeOffset(0);  // we want UTC
+  updateTime();
+  bootTime = timeClient.getFormattedTime(); 
+  bootTimeEpoch = timeClient.getEpochTime();
 
 #ifdef ENABLE_OTA
-    // peterm: delay needed, otherwise OTA won't work
-    if (status == WL_CONNECTED) {
-      delay(100);
-      setupOTA();
-    }
-#endif
-  }
-
+  // peterm: delay needed, otherwise OTA won't work
   if (status == WL_CONNECTED) {
-    // send current status
-    sendStatus();
+    delay(100);
+    setupOTA();
   }
+#endif
+
+  // send current status
+  sendStatus();
   Serial.println("ready");
   displayFreeHeap("setup end");  
 }

@@ -62,6 +62,13 @@ The hub can communicate with an MQTT server. We use the following topics:
 The yellow LEDs indicate which plugs have devices connected. The yellow LED is turned on when meta-data is received from a device. 
 It is turned off if the device fails to respond to two consecutive polling messages.
 
+The blue LED indicates the current network connection status. It has a couple modes:
+
+*   If there is an error connecting to the WiFi network or MQTT server on startup, it will blink 1 second on, 1 second off indefinitely.
+    In this case, you'll need to change the WiFi settings (currently in the settings.h file) and restart the hub. This currently applies
+    just to the AWS MQTT mode. We'll unify this with vanilla MQTT operation in the future.
+*   During operation, the blue LED will make a brief blink each time an MQTT message is successfully published.
+
 ## Running the hub simulator
 
 The simulator is in the `hub-sim` folder.
