@@ -177,6 +177,12 @@ char commandTopicName[100];  // apparently the topic name string needs to stay i
 char actuatorsTopicName[100];
 
 
+#define FREEZE_ERROR_WIFI 1
+#define FREEZE_ERROR_NTP 2
+#define FREEZE_ERROR_MQTT_CONN 3
+#define FREEZE_ERROR_MQTT_SUB 4
+
+
 //****************************************
 //*********** Data for status report
 //****************************************
@@ -307,7 +313,6 @@ bool mqttReconnect() {
   }
   return false;
 }
-
 
 
 #endif // ENABLE_MQTT
@@ -527,13 +532,15 @@ void setup() {
   }
 
   // prepare LED pins and button
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
   for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
     pinMode(ledPin[i], OUTPUT);
     digitalWrite(ledPin[i], LOW);
   }
-  ledcAttachPin(STATUS_LED_PIN, 0);  // attach status LED to PWM channel 0
-  ledcSetup(0, 5000, 8);  // set up channel 0 to use 5000 Hz with 8 bit resolution
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  digitalWrite(STATUS_LED_PIN, HIGH);  // turn on blue LED while starting up
+
+#ifdef ENABLE_BLE
 
   // see if config button is pressed
   if (digitalRead(BUTTON_PIN) == LOW) {
@@ -542,11 +549,11 @@ void setup() {
   }
 
   // for now we only run in BLE mode or wifi+mqtt mode; we don't want to do both
-#ifdef ENABLE_BLE
   if (bleMode) {
     startBLE(); 
     return;     
   }
+
 #endif // ENABLE_BLE
 
   // if wifi is not enabled, stop here
@@ -583,8 +590,18 @@ void setup() {
     }
   }
   if (status != WL_CONNECTED) {
-    freezeWithError();
+    freezeWithError(FREEZE_ERROR_WIFI);
   }
+
+  // get network time
+  timeClient.begin();
+  timeClient.setTimeOffset(0);  // we want UTC
+  int rc = updateTime();
+  if (rc) {
+    freezeWithError(FREEZE_ERROR_NTP);
+  }
+  bootTime = timeClient.getFormattedTime(); 
+  bootTimeEpoch = timeClient.getEpochTime();
 
 #ifdef ENABLE_AWS_IOT 
   // connect to AWS MQTT
@@ -606,7 +623,7 @@ void setup() {
   } else {
     Serial.println("failed to connect to AWS");
     setLastError(errAwsIotConnect);
-    freezeWithError();
+    freezeWithError(FREEZE_ERROR_MQTT_CONN);
   }
   
 #elif defined(ENABLE_MQTT)
@@ -616,13 +633,6 @@ void setup() {
   pubsubEnabled = true;     
 #endif // ENABLE_AWS_IOT 
 
-  // get network time
-  timeClient.begin();
-  timeClient.setTimeOffset(0);  // we want UTC
-  updateTime();
-  bootTime = timeClient.getFormattedTime(); 
-  bootTimeEpoch = timeClient.getEpochTime();
-
 #ifdef ENABLE_OTA
   // peterm: delay needed, otherwise OTA won't work
   if (status == WL_CONNECTED) {
@@ -631,7 +641,8 @@ void setup() {
   }
 #endif
 
-  // send current status
+  // final wrap up; send current status
+  digitalWrite(STATUS_LED_PIN, HIGH);  // turn off blue LED now that done with setup
   sendStatus();
   Serial.println("ready");
   displayFreeHeap("setup end");  
@@ -731,8 +742,11 @@ void loop() {
     delay(100);
     esp_restart();
   }
-  if (configMode) {
-    ledcWrite(0, (millis() >> 3) & 255);  // fade LED when in config mode
+  if (configMode) {  // blink yellow LEDs when in config mode
+    int on = (millis() >> 3) & 1;
+    for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
+      digitalWrite(ledPin[i], on);
+    }
   }
 
   // display memory usage
@@ -814,14 +828,20 @@ void checkNetwork() {
   }  
 #elif defined(ENABLE_AWS_IOT)
   if (WiFi.status() != WL_CONNECTED) {
-    unsigned long time = millis();
+    unsigned long time = millis();   
+    digitalWrite(STATUS_LED_PIN, (time >> 5) & 1);  // blink blue LED while WiFi disonnected
     if (time - lastWifiConnectionAttempt > 15000) {  // only try to reconnect once every 15 seconds
-      Serial.println("trying to reconnect to wifi");
+      Serial.println("---- trying to reconnect to wifi ----");
       ESP_LOGE(TAG, "mqttReconnect: Wifi.status() is not WL_CONNECTED (0), but %d. WIFI may have disconnected because of router reboot or a problem with hub. Restarting WiFi connection...", wifiStatus);          
       WiFi.begin(config.wifiNetwork, config.wifiPassword);
       lastWifiConnectionAttempt = time;
+      if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("reconnected to wifi");
+      }
     }
-  }  
+  } else {
+    digitalWrite(STATUS_LED_PIN, 0);  // turn off blue LED once we connect
+  }
 #endif
 }
 
@@ -872,7 +892,7 @@ void subscribe(const char *topicName) {
   } else {
     Serial.print("failed to subscribe to topic: ");
     Serial.println(topicName);
-    freezeWithError();
+    freezeWithError(FREEZE_ERROR_MQTT_SUB);
   }
 }
 
@@ -1551,16 +1571,10 @@ void initConfig() {
 }
 
 
-void setStatusLED(int state) {
-  if (state) {
-    ledcWrite(0, 255);
-  } else {
-    ledcWrite(0, 0);
-  }
-}
-
-
-void updateTime() {
+// get current time from network server
+// returns 0 on success
+int updateTime() {
+  int rc = 0;
 
   // get new time from network
   int counter = 0;
@@ -1569,6 +1583,7 @@ void updateTime() {
     delay(1000);
     counter++;
     if (counter > 10) {
+      rc = 1;
       break;  // failed; try again later
     }
   }
@@ -1579,14 +1594,17 @@ void updateTime() {
     Serial.print("updated time: ");
     Serial.println(lastEpochSeconds);
   }
+  return rc;
 }
 
 
-void freezeWithError() {
+void freezeWithError(int code) {
   while (true) {
-    setStatusLED(HIGH);
+    digitalWrite(STATUS_LED_PIN, HIGH);
+    digitalWrite(ledPin[code - 1], HIGH);  // assume codes start at 1
     delay(1000);
-    setStatusLED(LOW);
+    digitalWrite(STATUS_LED_PIN, LOW);
+    digitalWrite(ledPin[code - 1], LOW);
     delay(1000);
   }
 }

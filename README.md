@@ -38,6 +38,7 @@ The hub can communicate with an MQTT server. We use the following topics:
 1.  Install Arduino IDE
 2.  Go to Arduino IDE preferences; set `Additional Board Manager URLs` to `https://dl.espressif.com/dl/package_esp32_index.json`
 3.  Go to `Tools` / `Board` / `Board Manager...`, search for `esp32`, select result and click `Install`
+4.  Selection version 1.0.1 of the ESP32 core/board files (in the board manager).
 
 ## Compiling the code
 
@@ -59,15 +60,30 @@ The hub can communicate with an MQTT server. We use the following topics:
 
 ## Status LEDs
 
-The yellow LEDs indicate which plugs have devices connected. The yellow LED is turned on when meta-data is received from a device. 
-It is turned off if the device fails to respond to two consecutive polling messages.
+During startup, the large blue LED we be on. Once startup has completed successfully, the blue LED will turn off. If startup fails, 
+the blue LED will blink along with one of the yellow LEDs:
 
-The blue LED indicates the current network connection status. It has a couple modes:
+*   Blinking yellow 1 and blue: unable to connect to WiFi network (check WiFi name and password).
+*   Blinking yellow 2 and blue: network time update failed (check that WiFi network has internet access).
+*   Blinking yellow 3 and blue: unable to connect to MQTT server (check that server name is correct).
+*   Blinking yellow 4 and blue: unable to subscribe to MQTT channels (check that hub ID is correct and server is configured).
 
-*   If there is an error connecting to the WiFi network or MQTT server on startup, it will blink 1 second on, 1 second off indefinitely.
-    In this case, you'll need to change the WiFi settings (currently in the settings.h file) and restart the hub. This currently applies
-    just to the AWS MQTT mode. We'll unify this with vanilla MQTT operation in the future.
-*   During operation, the blue LED will make a brief blink each time an MQTT message is successfully published.
+After startup, the yellow LEDs indicate which plugs have devices connected. The yellow LED is turned on when meta-data is received from a device. 
+It is turned off if the device fails to respond to two consecutive polling messages (e.g. when it is unplugged).
+
+During normal operation, the small blue LED on the ESP32 will blink make a brief blink each time an MQTT message is successfully published.
+
+If the hub loses the WiFi connection during operation, the large blue LED will blink until the WiFi connection is restored. (It will attempt
+to reconnect every 15 seconds.)
+
+## Troubleshooting
+
+If you have trouble compiling:
+
+*   Make sure you have selected the correct board (`DOIT ESP32 DEVKIT V1`)
+*   Make sure you have selected the correct version of the ESP32 core/board libraries (1.0.1).
+*   Make sure you are using a recent Arduino IDE (we use 1.8.10).
+*   Make sure you have prepared the `settings.h` file as described above.
 
 ## Running the hub simulator
 
