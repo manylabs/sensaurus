@@ -60,15 +60,15 @@ The hub can communicate with an MQTT server. We use the following topics:
 
 ## Status LEDs
 
-During startup, the large blue LED we be on. Once startup has completed successfully, the blue LED will turn off. If startup fails, 
-the blue LED will blink along with one of the yellow LEDs:
+If startup fails, the blue LED will blink along with one of the yellow LEDs:
 
 *   Blinking yellow 1 and blue: unable to connect to WiFi network (check WiFi name and password).
 *   Blinking yellow 2 and blue: network time update failed (check that WiFi network has internet access).
 *   Blinking yellow 3 and blue: unable to connect to MQTT server (check that server name is correct).
 *   Blinking yellow 4 and blue: unable to subscribe to MQTT channels (check that hub ID is correct and server is configured).
 
-After startup, the yellow LEDs indicate which plugs have devices connected. The yellow LED is turned on when meta-data is received from a device. 
+After startup a succesful startup, the blue LED will be lit (with a medium brightness) and the yellow LEDs will indicate 
+which plugs have devices connected. The yellow LED is turned on when meta-data is received from a device.
 It is turned off if the device fails to respond to two consecutive polling messages (e.g. when it is unplugged).
 
 During normal operation, the small blue LED on the ESP32 will blink make a brief blink each time an MQTT message is successfully published.

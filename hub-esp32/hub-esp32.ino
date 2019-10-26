@@ -537,8 +537,9 @@ void setup() {
     pinMode(ledPin[i], OUTPUT);
     digitalWrite(ledPin[i], LOW);
   }
-  pinMode(STATUS_LED_PIN, OUTPUT);
-  digitalWrite(STATUS_LED_PIN, HIGH);  // turn on blue LED while starting up
+  ledcAttachPin(STATUS_LED_PIN, 0);  // attach status LED to PWM channel 0
+  ledcSetup(0, 5000, 8);  // set up channel 0 to use 5000 Hz with 8 bit resolution
+  ledcWrite(0, 0);  // status pin dark
 
 #ifdef ENABLE_BLE
 
@@ -642,10 +643,10 @@ void setup() {
 #endif
 
   // final wrap up; send current status
-  digitalWrite(STATUS_LED_PIN, HIGH);  // turn off blue LED now that done with setup
   sendStatus();
   Serial.println("ready");
   displayFreeHeap("setup end");  
+  ledcWrite(0, 70);  // turn on blue LED (medium brightness) now that done with setup
 }
 
 
@@ -828,8 +829,12 @@ void checkNetwork() {
   }  
 #elif defined(ENABLE_AWS_IOT)
   if (WiFi.status() != WL_CONNECTED) {
-    unsigned long time = millis();   
-    digitalWrite(STATUS_LED_PIN, (time >> 5) & 1);  // blink blue LED while WiFi disonnected
+    unsigned long time = millis();
+    if ((time >> 5) && 1) {  // blink blue LED while WiFi disonnected
+      ledcWrite(0, 200);
+    } else {
+      ledcWrite(0, 0);
+    }
     if (time - lastWifiConnectionAttempt > 15000) {  // only try to reconnect once every 15 seconds
       Serial.println("---- trying to reconnect to wifi ----");
       ESP_LOGE(TAG, "mqttReconnect: Wifi.status() is not WL_CONNECTED (0), but %d. WIFI may have disconnected because of router reboot or a problem with hub. Restarting WiFi connection...", wifiStatus);          
@@ -840,7 +845,7 @@ void checkNetwork() {
       }
     }
   } else {
-    digitalWrite(STATUS_LED_PIN, 0);  // turn off blue LED once we connect
+    ledcWrite(0, 70);  // turn on blue LED at medium brightness once we connect
   }
 #endif
 }
@@ -1517,9 +1522,9 @@ void sendSensorValues(unsigned long time) {
 
 
 void testLEDs() {
-  digitalWrite(STATUS_LED_PIN, HIGH);
+  ledcWrite(0, 0);  // status pin dark
   delay(500);
-  digitalWrite(STATUS_LED_PIN, LOW);
+  ledcWrite(0, 255);  // status pin bright
   for (int i = 0; i < MAX_DEVICE_COUNT; i++) {
     digitalWrite(ledPin[i], HIGH);
     delay(200);
@@ -1600,10 +1605,10 @@ int updateTime() {
 
 void freezeWithError(int code) {
   while (true) {
-    digitalWrite(STATUS_LED_PIN, HIGH);
+    ledcWrite(0, 200);  // status pin bright
     digitalWrite(ledPin[code - 1], HIGH);  // assume codes start at 1
     delay(1000);
-    digitalWrite(STATUS_LED_PIN, LOW);
+    ledcWrite(0, 0);  // status pin dark
     digitalWrite(ledPin[code - 1], LOW);
     delay(1000);
   }
