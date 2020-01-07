@@ -29,7 +29,7 @@ byte messageIndex = 0;
 
 // other globals
 unsigned long deviceId = 0;
-int co2;  // PPM
+int co2 = 0;  // PPM
 bool valid = false;
 
 
@@ -84,7 +84,6 @@ void processMessage(char *cmd, char *args[], int argCount) {
   if (strcmp(cmd, "v") == 0) {
     if (valid == false) {  // normally we read after a request, but the first time we should read before the request
       readSensor();
-      valid = true;
     }
     digitalWrite(ARD_LED_PIN, HIGH);
     hubStream.print("v:");
@@ -130,7 +129,7 @@ void readSensor() {
   if (v > 0) {
     co2 = v;
   }
-  valid = true; 
+  valid = true;
 }
 
 // read currently connected CO2 sensor via I2C; this will return 0 or -1 on read error
@@ -169,4 +168,3 @@ int readCO2() {
     return -1;
   }
 }
-
